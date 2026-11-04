@@ -45,12 +45,12 @@ export function createSecurityLogger(opts: SecurityLogOptions): SecurityLogger {
 
   function rotateIfNeeded() {
     try {
-      if (!existsSync(opts.file) || statSync(opts.file).size < maxBytes) return;
+      if (!existsSync(/*turbopackIgnore: true*/ opts.file) || statSync(/*turbopackIgnore: true*/ opts.file).size < maxBytes) return;
       for (let i = keep; i >= 1; i--) {
         const from = i === 1 ? opts.file : `${opts.file}.${i - 1}`;
         const to = `${opts.file}.${i}`;
-        if (i === keep && existsSync(to)) unlinkSync(to);
-        if (existsSync(from)) renameSync(from, to);
+        if (i === keep && existsSync(/*turbopackIgnore: true*/ to)) unlinkSync(/*turbopackIgnore: true*/ to);
+        if (existsSync(/*turbopackIgnore: true*/ from)) renameSync(/*turbopackIgnore: true*/ from, /*turbopackIgnore: true*/ to);
       }
     } catch {
       /* Rotation darf nie die Anfrage zum Scheitern bringen */
@@ -60,9 +60,9 @@ export function createSecurityLogger(opts: SecurityLogOptions): SecurityLogger {
   function write(line: string) {
     out(line);
     try {
-      mkdirSync(dirname(opts.file), { recursive: true });
+      mkdirSync(/*turbopackIgnore: true*/ dirname(opts.file), { recursive: true });
       rotateIfNeeded();
-      appendFileSync(opts.file, line + "\n", { mode: 0o644 });
+      appendFileSync(/*turbopackIgnore: true*/ opts.file, line + "\n", { mode: 0o644 });
     } catch (err) {
       console.error("Sicherheits-Log konnte nicht geschrieben werden:", err instanceof Error ? err.message : "unbekannter Fehler");
     }

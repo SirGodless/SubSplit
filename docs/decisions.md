@@ -44,3 +44,10 @@
 ## Verifikation externer Formate (Stand dieser Session)
 - **PayPal.Me** (Recherche, PayPal-Hilfeseite): Name nur Buchstaben/Ziffern, max. 20 Zeichen, nicht case-sensitiv. Betrag steht am Linkende, Währung direkt dahinter (Beispiel der Hilfe: `PayPal.Me/DiaRusso/25AUD`). Dezimaltrenner und `EUR` sind **nicht** ausdrücklich belegt, die Domain `paypal.com/paypalme` statt `paypal.me` ebenfalls nicht. Die Doku-Seiten waren in der Session nicht abrufbar (Netzwerk-Allowlist).
 - **EPC069-12:** Das Original-PDF war in der Session nicht abrufbar (`europeanpaymentscouncil.eu` nicht in der Allowlist). Das Payload-Layout stützt sich auf die Suchergebnisse (IBAN Pflicht, Betrag optional max. 12 Zeichen, Zweck 4 Zeichen, Verwendungszweck max. 140 Zeichen) und auf die Feldreihenfolge der Spezifikation; BIC-Regel von Version 002 bitte vor dem Livebetrieb gegen die Spezifikation prüfen.
+
+## HTTP-Schicht (ohne Oberfläche)
+- Teilnehmer: `GET /api/p/[token]?month=`, `POST /api/p/[token]/paid`. Unbekannte und widerrufene Tokens liefern identisch `404 {"error":"not_found"}`. Rate-Limit 120 Anfragen/Minute je IP.
+- Admin: `POST /api/admin/login` (10 Versuche/15 min je IP), danach Session-Cookie (`HttpOnly`, `SameSite=Strict`, `Secure` bei https-`BASE_URL`). Schreibende Admin-Routen verlangen Origin-Prüfung und `x-csrf-token`.
+- Magic-Links werden nur bei Erzeugung bzw. Neuerzeugung im Klartext zurückgegeben; gespeichert ist nur der SHA-256-Hash.
+- Security-Header (CSP, nosniff, DENY, `Referrer-Policy: no-referrer`, HSTS) via `next.config.ts`. CSP erlaubt vorläufig `unsafe-inline` und wird beim Bau der Oberfläche auf Nonces umgestellt.
+- Turbopack: dynamische Dateizugriffe im Sicherheits-Log sind mit `turbopackIgnore` markiert, sonst würde das ganze Projekt ins Standalone-Bundle getraced.
