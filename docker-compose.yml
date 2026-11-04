@@ -1,0 +1,37 @@
+services:
+  subsplit:
+    build: .
+    image: subsplit:latest
+    container_name: subsplit
+    restart: unless-stopped
+    init: true # saubere Signalweitergabe (SIGTERM) und keine Zombie-Prozesse
+    env_file: .env
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - subsplit-data:/data # SQLite-Datenbank (Backup: dieses Volume sichern)
+      - ./logs:/logs # Sicherheits-Log für fail2ban (Host-Pfad ./logs)
+    expose:
+      - "3000" # nur im Docker-Netzwerk, nicht auf den Host veröffentlicht
+    networks:
+      - proxy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    stop_grace_period: 20s
+
+volumes:
+  subsplit-data:
+    name: subsplit-data
+
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-proxy}
