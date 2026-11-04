@@ -45,12 +45,14 @@ export default function AdminApp({ dueDay }: { dueDay: number }) {
     [csrf, router],
   );
 
-  const guard = useCallback(async (fn: () => Promise<void>, okText?: string) => {
+  const guard = useCallback(async (fn: () => Promise<void>, okText?: string): Promise<boolean> => {
     try {
       await fn();
       if (okText) setMsg({ kind: "ok", text: okText });
+      return true;
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof Error ? e.message : "Unbekannter Fehler" });
+      return false;
     }
   }, []);
 
@@ -197,12 +199,17 @@ type Call = (path: string, method?: string, body?: unknown) => Promise<unknown>;
 
 function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
   subs: { subscriptions: Sub[]; prices: Price[]; memberships: Membership[] }; people: Person[]; thisMonth: string;
-  personName: (id: number) => string; onSubmit: (fn: (call: Call) => Promise<unknown>, ok: string) => void;
+  personName: (id: number) => string; onSubmit: (fn: (call: Call) => Promise<unknown>, ok: string) => Promise<boolean>;
 }) {
-  const priceNow = (id: number) => {
-    const ps = subs.prices.filter((p) => p.subscriptionId === id && p.validFromMonth <= thisMonth).sort((a, b) => b.validFromMonth.localeCompare(a.validFromMonth));
-    return ps[0]?.amountCents ?? null;
-  };
+  // null = Liste, "new" = Formular für neues Abo, Zahl = Verwaltung dieses Abos
+  const [view, setView] = useState<number | "new" | null>(null);
+  const [person, setPerson] = useState<string>("");
+  const [weight, setWeight] = useState<string>("1");
+
+  const pricesOf = (id: number) => subs.prices.filter((p) => p.subscriptionId === id).sort((a, b) => b.validFromMonth.localeCompare(a.validFromMonth));
+  const priceNow = (id: number) => pricesOf(id).find((p) => p.validFromMonth <= thisMonth)?.amountCents ?? null;
+  const activeCount = (id: number) =>
+    subs.memberships.filter((m) => m.subscriptionId === id && m.validFromMonth <= thisMonth && (m.validToMonth === null || m.validToMonth >= thisMonth)).length;
   const euro = (v: FormDataEntryValue | null) => {
     const c = parseEuro(String(v ?? ""));
     if (c === null) throw new Error("Preis bitte als Zahl eingeben, z. B. 12,99.");
@@ -211,79 +218,129 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
   const monthField = (name: string, def: string, label: string) => (
     <label className="f"><span className="label">{label}</span><input name={name} defaultValue={def} pattern="\d{4}-(0[1-9]|1[0-2])" placeholder="JJJJ-MM" required /></label>
   );
-  const subSelect = <select name="sub" required>{subs.subscriptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>;
-  const personSelect = <select name="person" required>{people.map((p) => <option key={p.id} value={p.id}>{p.displayName}</option>)}</select>;
-  const submit = (fn: (f: FormData, call: Call) => Promise<unknown>, ok: string) => (e: React.FormEvent<HTMLFormElement>) => {
+  const submit = (fn: (f: FormData, call: Call) => Promise<unknown>, ok: string, after?: () => void) => (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    onSubmit((call) => fn(f, call), ok);
+    void onSubmit((call) => fn(f, call), ok).then((done) => { if (done) after?.(); });
   };
 
-  return (
-    <section className="section" style={{ borderTop: 0 }}>
-      <div className="stack" style={{ gap: 26 }}>
-        {subs.subscriptions.length === 0 && <p className="muted">Noch keine Abos angelegt.</p>}
-        {subs.subscriptions.map((s) => (
-          <article key={s.id}>
-            <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <h3 style={{ margin: 0, fontSize: 20 }}>{s.name}</h3>
-              <span className="mono">{priceNow(s.id) === null ? "kein Preis" : formatEuro(priceNow(s.id)!)} <span className="muted">/ Monat</span></span>
-            </header>
-            <p className="label" style={{ margin: "6px 0 8px" }}>
-              Preise: {subs.prices.filter((p) => p.subscriptionId === s.id).sort((a, b) => a.validFromMonth.localeCompare(b.validFromMonth)).map((p) => `ab ${p.validFromMonth}: ${formatEuro(p.amountCents)}`).join(" · ")}
-            </p>
-            <div className="rows">
-              {subs.memberships.filter((m) => m.subscriptionId === s.id).sort((a, b) => a.participantId - b.participantId || a.validFromMonth.localeCompare(b.validFromMonth)).map((m, i) => (
-                <div key={i} className="row" style={{ gridTemplateColumns: "1fr auto auto" }}>
-                  <span>{personName(m.participantId)}</span>
-                  <span className="mono muted">{m.weight}× · {m.validFromMonth} – {m.validToMonth ?? "offen"}</span>
-                </div>
-              ))}
-            </div>
-          </article>
-        ))}
-      </div>
-
-      <div className="grid2 grid2--stack" style={{ marginTop: 34, gap: 28 }}>
-        <form className="stack" onSubmit={submit(async (f, call) => call("/api/admin/subscriptions", "POST", { name: f.get("name"), priceCents: euro(f.get("price")), validFromMonth: f.get("from") }), "Abo angelegt.")}>
-          <h3 className="h">Neues Abo</h3>
-          <label className="f"><span className="label">Name</span><input name="name" required maxLength={60} /></label>
+  // ---------- Neues Abo ----------
+  if (view === "new") {
+    return (
+      <section className="section" style={{ borderTop: 0 }}>
+        <button className="btn btn--small" onClick={() => setView(null)}>‹ Alle Abos</button>
+        <h2 className="h" style={{ margin: "20px 0 14px" }}>Neues Abo</h2>
+        <form className="stack" style={{ maxWidth: 420 }} onSubmit={submit(
+          async (f, call) => call("/api/admin/subscriptions", "POST", { name: f.get("name"), priceCents: euro(f.get("price")), validFromMonth: f.get("from") }),
+          "Abo angelegt.", () => setView(null))}>
+          <label className="f"><span className="label">Name</span><input name="name" required maxLength={60} autoFocus /></label>
           <label className="f"><span className="label">Preis pro Monat (EUR)</span><input name="price" inputMode="decimal" required placeholder="12,99" /></label>
           {monthField("from", thisMonth, "Gültig ab (Monat)")}
           <button className="btn btn--primary">Abo anlegen</button>
         </form>
+      </section>
+    );
+  }
 
-        {subs.subscriptions.length > 0 && (
-          <form className="stack" onSubmit={submit(async (f, call) => call(`/api/admin/subscriptions/${f.get("sub")}/prices`, "POST", { validFromMonth: f.get("from"), priceCents: euro(f.get("price")) }), "Preis gespeichert.")}>
-            <h3 className="h">Preis ändern</h3>
-            <label className="f"><span className="label">Abo</span>{subSelect}</label>
+  // ---------- Verwaltung eines Abos ----------
+  const sub = typeof view === "number" ? subs.subscriptions.find((s) => s.id === view) : undefined;
+  if (sub) {
+    const members = subs.memberships.filter((m) => m.subscriptionId === sub.id).sort((a, b) => a.participantId - b.participantId || a.validFromMonth.localeCompare(b.validFromMonth));
+    const state = (m: Membership) =>
+      m.validToMonth !== null && m.validToMonth < thisMonth ? { label: "Beendet", cls: "chip--open" }
+      : m.validFromMonth > thisMonth ? { label: `Ab ${m.validFromMonth}`, cls: "chip--marked_paid" }
+      : { label: "Aktiv", cls: "chip--confirmed" };
+    const now = priceNow(sub.id);
+    return (
+      <section className="section" style={{ borderTop: 0 }}>
+        <button className="btn btn--small" onClick={() => setView(null)}>‹ Alle Abos</button>
+        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, margin: "20px 0 4px", flexWrap: "wrap" }}>
+          <h2 style={{ margin: 0, fontSize: 26 }}>{sub.name}</h2>
+          <span className="mono">{now === null ? "kein Preis" : formatEuro(now)} <span className="muted">/ Monat</span></span>
+        </header>
+
+        <div className="section">
+          <h3 className="h">Preis</h3>
+          <div className="rows" style={{ margin: "12px 0 18px" }}>
+            {pricesOf(sub.id).map((p) => (
+              <div key={p.validFromMonth} className="row" style={{ gridTemplateColumns: "1fr auto" }}>
+                <span className="mono muted">ab {p.validFromMonth}</span><span className="mono">{formatEuro(p.amountCents)}</span>
+              </div>
+            ))}
+          </div>
+          <form className="grid2 grid2--stack" style={{ alignItems: "end" }} onSubmit={submit(
+            async (f, call) => call(`/api/admin/subscriptions/${sub.id}/prices`, "POST", { validFromMonth: f.get("from"), priceCents: euro(f.get("price")) }), "Preis gespeichert.")}>
             <label className="f"><span className="label">Neuer Preis (EUR)</span><input name="price" inputMode="decimal" required placeholder="14,99" /></label>
             {monthField("from", thisMonth, "Gültig ab (Monat)")}
-            <button className="btn">Preis speichern</button>
+            <button className="btn">Preis ändern</button>
           </form>
-        )}
+        </div>
 
-        {subs.subscriptions.length > 0 && people.length > 0 && (
-          <form className="stack" onSubmit={submit(async (f, call) => call("/api/admin/memberships", "PUT", { subscriptionId: Number(f.get("sub")), participantId: Number(f.get("person")), weight: Number(f.get("weight")), from: f.get("from") }), "Beteiligung gespeichert.")}>
-            <h3 className="h">Beteiligung setzen / Gewicht ändern</h3>
-            <label className="f"><span className="label">Abo</span>{subSelect}</label>
-            <label className="f"><span className="label">Teilnehmer</span>{personSelect}</label>
-            <label className="f"><span className="label">Gewicht (1 = gleicher Anteil)</span><input name="weight" type="number" min={1} max={1000} defaultValue={1} required /></label>
-            {monthField("from", thisMonth, "Ab Monat")}
-            <button className="btn btn--primary">Speichern</button>
-          </form>
-        )}
+        <div className="section">
+          <h3 className="h">Beteiligte</h3>
+          {members.length === 0 ? <p className="muted">Noch niemand beteiligt.</p> : (
+            <div className="rows" style={{ margin: "12px 0 18px" }}>
+              {members.map((m, i) => {
+                const st = state(m);
+                return (
+                  <button key={i} type="button" className="listbtn" onClick={() => { setPerson(String(m.participantId)); setWeight(String(m.weight)); }}
+                    aria-label={`${personName(m.participantId)} in das Formular übernehmen`}>
+                    <span style={{ fontWeight: 600 }}>{personName(m.participantId)}</span>
+                    <span className="mono muted">{m.weight}× · {m.validFromMonth} – {m.validToMonth ?? "offen"}</span>
+                    <span className={`chip ${st.cls}`}>{st.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {people.length > 0 && (
+            <div className="grid2 grid2--stack" style={{ gap: 28 }}>
+              <form className="stack" onSubmit={submit(
+                async (f, call) => call("/api/admin/memberships", "PUT", { subscriptionId: sub.id, participantId: Number(person), weight: Number(weight), from: f.get("from") }), "Beteiligung gespeichert.")}>
+                <h4 className="h">Beteiligung setzen / Gewicht ändern</h4>
+                <label className="f"><span className="label">Teilnehmer</span>
+                  <select value={person} onChange={(e) => setPerson(e.target.value)} required>
+                    <option value="" disabled>Bitte wählen</option>
+                    {people.map((p) => <option key={p.id} value={p.id}>{p.displayName}</option>)}
+                  </select></label>
+                <label className="f"><span className="label">Gewicht (1 = gleicher Anteil)</span>
+                  <input type="number" min={1} max={1000} value={weight} onChange={(e) => setWeight(e.target.value)} required /></label>
+                {monthField("from", thisMonth, "Ab Monat")}
+                <button className="btn btn--primary">Speichern</button>
+              </form>
+              <form className="stack" onSubmit={submit(
+                async (f, call) => call("/api/admin/memberships/end", "POST", { subscriptionId: sub.id, participantId: Number(person), lastMonth: f.get("last") }), "Beteiligung beendet.")}>
+                <h4 className="h">Beteiligung beenden</h4>
+                <p className="muted" style={{ margin: 0, fontSize: 14 }}>Gilt für den links gewählten Teilnehmer. Du kannst auch eine Zeile oben anklicken.</p>
+                {monthField("last", thisMonth, "Letzter Monat der Beteiligung")}
+                <button className="btn" disabled={!person}>Beenden</button>
+              </form>
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
 
-        {subs.subscriptions.length > 0 && people.length > 0 && (
-          <form className="stack" onSubmit={submit(async (f, call) => call("/api/admin/memberships/end", "POST", { subscriptionId: Number(f.get("sub")), participantId: Number(f.get("person")), lastMonth: f.get("last") }), "Beteiligung beendet.")}>
-            <h3 className="h">Beteiligung beenden</h3>
-            <label className="f"><span className="label">Abo</span>{subSelect}</label>
-            <label className="f"><span className="label">Teilnehmer</span>{personSelect}</label>
-            {monthField("last", thisMonth, "Letzter Monat der Beteiligung")}
-            <button className="btn">Beenden</button>
-          </form>
-        )}
+  // ---------- Liste ----------
+  return (
+    <section className="section" style={{ borderTop: 0 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 12 }}>
+        <h2 className="h">Alle Abos</h2>
+        <button className="btn btn--primary btn--small" onClick={() => setView("new")}>+ Neues Abo</button>
       </div>
+      {subs.subscriptions.length === 0 ? <p className="muted">Noch keine Abos angelegt.</p> : (
+        <div className="rows">
+          {subs.subscriptions.map((s) => (
+            <button key={s.id} type="button" className="listbtn listbtn--sub" onClick={() => { setView(s.id); setPerson(""); setWeight("1"); }}>
+              <span style={{ fontWeight: 700, fontSize: 18 }}>{s.name}</span>
+              <span className="muted mono">{activeCount(s.id)} {activeCount(s.id) === 1 ? "Beteiligter" : "Beteiligte"}</span>
+              <span className="mono">{priceNow(s.id) === null ? "–" : formatEuro(priceNow(s.id)!)}<span className="muted"> / Monat</span></span>
+              <span aria-hidden="true" className="accent">›</span>
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
