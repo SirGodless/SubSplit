@@ -51,3 +51,11 @@
 - Magic-Links werden nur bei Erzeugung bzw. Neuerzeugung im Klartext zurückgegeben; gespeichert ist nur der SHA-256-Hash.
 - Security-Header (CSP, nosniff, DENY, `Referrer-Policy: no-referrer`, HSTS) via `next.config.ts`. CSP erlaubt vorläufig `unsafe-inline` und wird beim Bau der Oberfläche auf Nonces umgestellt.
 - Turbopack: dynamische Dateizugriffe im Sicherheits-Log sind mit `turbopackIgnore` markiert, sonst würde das ganze Projekt ins Standalone-Bundle getraced.
+
+## Oberfläche
+- Stil nach Vorlage des Admins: flach, keine Rundungen, Haarlinien, Mono-Großbuchstaben-Labels, ein Signalrot. **Dunkel ist Standard**, Hell per Umschalter (`localStorage`, wird vor dem ersten Paint gesetzt).
+- Schriften: Archivo und IBM Plex Mono, lokal über `@fontsource` ausgeliefert (kein Google-Fonts-Aufruf: CSP und Datenschutz).
+- Rot in Flächen `#e0300f` (weißer Text), roter Text auf dunklem Grund `#ff6a4d`, damit der Kontrast reicht.
+- QR-Codes bleiben immer schwarz auf weiß (Scanbarkeit) und stehen mobil nebeneinander; sie sind nachrangig gegenüber dem PayPal-Button und den kopierbaren Bankdaten.
+- Teilnehmer-Seite ruft die Services direkt (Server Component), nicht die API; gleiche Token-Prüfung, gleiche Logzeilen, gleiche 404-Seite für unbekannte und widerrufene Links.
+- Admin-Oberfläche ist eine Client-App gegen die Admin-API (Übersicht, Abos, Teilnehmer).

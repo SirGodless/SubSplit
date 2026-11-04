@@ -1,3 +1,7 @@
 export default function Home() {
-  return <main style={{ padding: 16 }}>SubSplit</main>;
+  return (
+    <main className="shell" style={{ paddingTop: 48 }}>
+      <p className="label">SubSplit</p>
+    </main>
+  );
 }
