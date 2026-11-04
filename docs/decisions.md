@@ -24,3 +24,23 @@
 
 ## Offen / noch zu prüfen
 - **PayPal.me:** URL-Format, Dezimaltrenner und Währung vor Meilenstein 5 gegen die offizielle Doku prüfen. Die Namensregel (`[A-Za-z0-9]{1,20}`) ist bewusst konservativ und noch nicht gegen PayPal-Regeln belegt.
+
+## Rundung (Änderung gegenüber dem Briefing, auf Wunsch des Admins)
+- Statt Largest-Remainder wird **jeder Anteil auf den ganzen Cent abgerundet**; der Rest (< 1 Cent pro Beteiligtem) wird dem Admin zugeschrieben.
+  - Ist der Admin Teilnehmer des Abos, wird der Rest auf seinen Anteil gerechnet.
+  - Sonst wird er als eigene Zeile "Rundungsrest (Admin)" angezeigt, damit die Summe der Zeilen weiterhin dem Abo-Preis entspricht.
+- Folge: Mitzahler zahlen nie mehr als ihren exakten Anteil. Der Rest beträgt höchstens (Beteiligte - 1) Cent pro Abo und Monat.
+
+## Sicherheit
+- Client-IP: die Socket-Adresse reicht Next.js nicht an Route-Handler durch. Ein Hook in `instrumentation-node.ts` setzt für jede Anfrage den Header `x-subsplit-peer` selbst und überschreibt dabei Clientwerte. Danach wertet `createIpResolver` den Header `X-Forwarded-For` nur aus, wenn der Peer in `TRUSTED_PROXY_CIDR` liegt (von rechts, erster nicht vertrauenswürdiger Eintrag).
+- Proxy ohne X-Forwarded-For oder mit ungültiger Kette -> `ip=unknown` (nie die Proxy-Adresse melden).
+- Cookie `Secure` richtet sich nach `BASE_URL` (https), nicht nach Request-Headern.
+- Admin-CSRF: Cookie `SameSite=Strict` + Origin-Prüfung + Header `x-csrf-token` gegen Token in der Session.
+- Passwort-Hash: scrypt (N=65536, r=8, p=1), `npm run hash-password`.
+
+## Freigaben für Fälligkeit/Änderungen
+- Änderungen (Preis, Gewicht, Beteiligung) sind ab Monat M nur erlaubt, wenn M >= aktueller Monat und für Monate >= M noch keine Zahlungen erzeugt wurden. Dadurch bleiben erzeugte Zahlungen unverändert.
+
+## Verifikation externer Formate (Stand dieser Session)
+- **PayPal.Me** (Recherche, PayPal-Hilfeseite): Name nur Buchstaben/Ziffern, max. 20 Zeichen, nicht case-sensitiv. Betrag steht am Linkende, Währung direkt dahinter (Beispiel der Hilfe: `PayPal.Me/DiaRusso/25AUD`). Dezimaltrenner und `EUR` sind **nicht** ausdrücklich belegt, die Domain `paypal.com/paypalme` statt `paypal.me` ebenfalls nicht. Die Doku-Seiten waren in der Session nicht abrufbar (Netzwerk-Allowlist).
+- **EPC069-12:** Das Original-PDF war in der Session nicht abrufbar (`europeanpaymentscouncil.eu` nicht in der Allowlist). Das Payload-Layout stützt sich auf die Suchergebnisse (IBAN Pflicht, Betrag optional max. 12 Zeichen, Zweck 4 Zeichen, Verwendungszweck max. 140 Zeichen) und auf die Feldreihenfolge der Spezifikation; BIC-Regel von Version 002 bitte vor dem Livebetrieb gegen die Spezifikation prüfen.

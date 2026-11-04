@@ -14,24 +14,30 @@ function mulberry32(seed: number) {
   };
 }
 
-describe("allocate (Largest-Remainder)", () => {
-  it("verteilt 1000 Cent auf 3 gleiche Teile als 334/333/333, Zusatzcent nach kleinster ID", () => {
-    const r = allocate(1000, [3, 1, 2].map((id) => ({ participantId: id, weight: 1 })));
-    expect(r.map((x) => [x.participantId, x.amountCents])).toEqual([[1, 334], [2, 333], [3, 333]]);
+describe("allocate (abrunden, Rest an Admin)", () => {
+  const eq = (ids: number[]) => ids.map((id) => ({ participantId: id, weight: 1 }));
+  it("1000 Cent auf 3: alle 333, Rest 1 geht an den Admin (im Abo)", () => {
+    const r = allocate(1000, eq([1, 2, 3]), 1);
+    expect(r.shares.map((x) => [x.participantId, x.amountCents])).toEqual([[1, 334], [2, 333], [3, 333]]);
+    expect(r.restCents).toBe(0);
   });
-  it("berücksichtigt Gewichte (Beispiel 1799 Cent, 2:1; Cent geht an größeren Rest)", () => {
-    const r = allocate(1799, [{ participantId: 1, weight: 2 }, { participantId: 2, weight: 1 }]);
-    expect(r.map((x) => x.amountCents)).toEqual([1199, 600]);
+  it("Admin nicht im Abo: Rest bleibt separat stehen", () => {
+    const r = allocate(1000, eq([2, 3, 4]), 1);
+    expect(r.shares.map((x) => x.amountCents)).toEqual([333, 333, 333]);
+    expect(r.restCents).toBe(1);
   });
-  it("Rest entscheidet vor ID (größerer Rest bekommt den Cent)", () => {
-    // 100 * [1,2] / 3 -> 33.33 und 66.67: Rest 1/3 vs 2/3 -> ID 2 bekommt den Cent
-    const r = allocate(100, [{ participantId: 1, weight: 1 }, { participantId: 2, weight: 2 }]);
-    expect(r.map((x) => x.amountCents)).toEqual([33, 67]);
+  it("ohne Rest-Empfänger bleibt der Rest ebenfalls separat", () => {
+    expect(allocate(1000, eq([1, 2, 3])).restCents).toBe(1);
   });
-  it("Preis 0 und einzelner Teilnehmer", () => {
-    expect(allocate(0, [{ participantId: 1, weight: 5 }])[0]!.amountCents).toBe(0);
-    expect(allocate(999, [{ participantId: 1, weight: 5 }])[0]!.amountCents).toBe(999);
-    expect(allocate(500, [])).toEqual([]);
+  it("berücksichtigt Gewichte (1799 Cent, 2:1): 1199 + 599, Rest 1", () => {
+    const r = allocate(1799, [{ participantId: 2, weight: 2 }, { participantId: 3, weight: 1 }], 1);
+    expect(r.shares.map((x) => x.amountCents)).toEqual([1199, 599]);
+    expect(r.restCents).toBe(1);
+  });
+  it("Preis 0, einzelner Teilnehmer, leere Liste", () => {
+    expect(allocate(0, [{ participantId: 1, weight: 5 }]).shares[0]!.amountCents).toBe(0);
+    expect(allocate(999, [{ participantId: 1, weight: 5 }]).shares[0]!.amountCents).toBe(999);
+    expect(allocate(500, [])).toEqual({ shares: [], restCents: 0 });
   });
   it("lehnt ungültige Eingaben ab", () => {
     expect(() => allocate(10.5, [{ participantId: 1, weight: 1 }])).toThrow();
@@ -40,24 +46,33 @@ describe("allocate (Largest-Remainder)", () => {
     expect(() => allocate(100, [{ participantId: 1, weight: 1.5 }])).toThrow();
     expect(() => allocate(100, [{ participantId: 1, weight: 1 }, { participantId: 1, weight: 1 }])).toThrow();
   });
-  it("Summe der Anteile == Preis, bei 5000 zufälligen Fällen; Anteile weichen < 1 Cent vom Ideal ab", () => {
+  it("Summe der Anteile + Rest == Preis (5000 Zufallsfälle); Teilnehmer zahlen nie mehr als ihren exakten Anteil", () => {
     const rnd = mulberry32(42);
     for (let i = 0; i < 5000; i++) {
       const price = Math.floor(rnd() * 100000);
       const n = 1 + Math.floor(rnd() * 12);
-      const members = Array.from({ length: n }, (_, k) => ({ participantId: k + 1, weight: 1 + Math.floor(rnd() * 10) }));
-      const result = allocate(price, members);
-      expect(result.reduce((s, x) => s + x.amountCents, 0)).toBe(price);
+      const members = Array.from({ length: n }, (_, k) => ({ participantId: k + 2, weight: 1 + Math.floor(rnd() * 10) }));
       const W = members.reduce((s, m) => s + m.weight, 0);
-      for (const x of result) {
-        expect(Math.abs(x.amountCents - (price * x.weight) / W)).toBeLessThan(1);
+      // Admin (ID 1) nicht im Abo: reine Abrundung, Rest < n Cent
+      const out = allocate(price, members, 1);
+      expect(out.shares.reduce((s, x) => s + x.amountCents, 0) + out.restCents).toBe(price);
+      expect(out.restCents).toBeGreaterThanOrEqual(0);
+      expect(out.restCents).toBeLessThan(n);
+      for (const x of out.shares) {
+        const ideal = (price * x.weight) / W;
+        expect(x.amountCents).toBeLessThanOrEqual(ideal);
+        expect(ideal - x.amountCents).toBeLessThan(1);
         expect(Number.isInteger(x.amountCents)).toBe(true);
       }
+      // Admin im Abo: bekommt den Rest, Summe der Anteile == Preis
+      const withOwner = allocate(price, [{ participantId: 1, weight: 1 }, ...members], 1);
+      expect(withOwner.shares.reduce((s, x) => s + x.amountCents, 0)).toBe(price);
+      expect(withOwner.restCents).toBe(0);
     }
   });
   it("ist unabhängig von der Eingabereihenfolge", () => {
-    const a = [{ participantId: 1, weight: 1 }, { participantId: 2, weight: 1 }, { participantId: 3, weight: 1 }];
-    expect(allocate(100, a)).toEqual(allocate(100, [...a].reverse()));
+    const a = eq([1, 2, 3]);
+    expect(allocate(100, a, 1)).toEqual(allocate(100, [...a].reverse(), 1));
   });
 });
 
@@ -115,15 +130,19 @@ describe("computeMonth", () => {
   it("Monatssumme = Summe der gerundeten Anteile über mehrere Abos", () => {
     const r = computeMonth("2026-05", subs, participants);
     const nf = r.subscriptions.find((s) => s.subscriptionId === 10)!;
-    expect(nf.lines.map((l) => l.amountCents)).toEqual([667, 666, 666]); // 1999 / 3, Zusatzcent -> ID 1
+    expect(nf.lines.map((l) => l.amountCents)).toEqual([667, 666, 666]); // 1999 / 3 abgerundet, Rest 1 -> Admin (ID 1)
+    expect(nf.restCents).toBe(0);
     const sp = r.subscriptions.find((s) => s.subscriptionId === 20)!;
-    expect(sp.lines.map((l) => l.amountCents)).toEqual([1133, 567]); // 1700*2/3 = 1133.33, 1700/3 = 566.67
+    expect(sp.lines.map((l) => l.amountCents)).toEqual([1133, 566]); // abgerundet, Admin nicht im Abo
+    expect(sp.restCents).toBe(1); // bleibt beim Admin, eigene Zeile
+    expect(sp.lines.reduce((s, l) => s + l.amountCents, 0) + sp.restCents).toBe(1700);
     const total = (id: number) => r.totals.find((t) => t.participantId === id)!.totalCents;
     expect(total(2)).toBe(666 + 1133);
-    expect(total(3)).toBe(666 + 567);
+    expect(total(3)).toBe(666 + 566);
     expect(total(4)).toBe(300);
-    // Gesamtsumme aller Anteile == Summe aller Abo-Preise
-    expect(r.totals.reduce((s, t) => s + t.totalCents, 0)).toBe(1999 + 1700 + 300);
+    // Anteile + Rundungsreste == Summe aller Abo-Preise
+    const rests = r.subscriptions.reduce((s, x) => s + x.restCents, 0);
+    expect(r.totals.reduce((s, t) => s + t.totalCents, 0) + rests).toBe(1999 + 1700 + 300);
   });
 
   it("Owner-Anteil wird berechnet, aber nicht als Zahlung geführt", () => {

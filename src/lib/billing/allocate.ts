@@ -7,14 +7,22 @@ export interface Allocation {
   weight: number;
   amountCents: number;
 }
+export interface AllocationResult {
+  shares: Allocation[];
+  /** Rundungsrest, der keinem Teilnehmer zugeschrieben wurde (nur wenn der Empfänger nicht im Abo ist). */
+  restCents: number;
+}
 
 /**
- * Verteilt priceCents nach Gewichten (Largest-Remainder). Die Summe der Anteile ist exakt priceCents.
- * Gleichstand beim Rest: kleinere participantId bekommt den Zusatzcent zuerst. Nur Integer-Rechnung.
+ * Verteilt priceCents nach Gewichten. Jeder Anteil wird auf den ganzen Cent ABGERUNDET; der Rest
+ * (weniger als ein Cent pro Beteiligtem) wird dem Rest-Empfänger (Admin) zugeschrieben:
+ *  - ist er im Abo, wird der Rest auf seinen Anteil gerechnet,
+ *  - sonst bleibt er als restCents separat stehen.
+ * Immer gilt: Summe(shares) + restCents == priceCents. Nur Integer-Rechnung.
  */
-export function allocate(priceCents: number, members: Weighted[]): Allocation[] {
+export function allocate(priceCents: number, members: Weighted[], restRecipientId: number | null = null): AllocationResult {
   if (!Number.isSafeInteger(priceCents) || priceCents < 0) throw new Error("Preis muss eine nichtnegative ganze Zahl in Cent sein");
-  if (members.length === 0) return [];
+  if (members.length === 0) return { shares: [], restCents: 0 };
   const seen = new Set<number>();
   let totalWeight = 0;
   for (const m of members) {
@@ -25,19 +33,15 @@ export function allocate(priceCents: number, members: Weighted[]): Allocation[] 
   }
   if (!Number.isSafeInteger(priceCents * totalWeight)) throw new Error("Wertebereich überschritten");
 
-  const rows = members.map((m) => {
-    const product = priceCents * m.weight;
-    return { ...m, base: Math.floor(product / totalWeight), remainder: product % totalWeight };
-  });
-  let leftover = priceCents - rows.reduce((s, r) => s + r.base, 0);
-  const order = [...rows].sort((a, b) => b.remainder - a.remainder || a.participantId - b.participantId);
-  const bonus = new Map<number, number>();
-  for (const r of order) {
-    if (leftover <= 0) break;
-    bonus.set(r.participantId, 1);
-    leftover--;
-  }
-  return rows
-    .map((r) => ({ participantId: r.participantId, weight: r.weight, amountCents: r.base + (bonus.get(r.participantId) ?? 0) }))
+  const shares = members
+    .map((m) => ({ participantId: m.participantId, weight: m.weight, amountCents: Math.floor((priceCents * m.weight) / totalWeight) }))
     .sort((a, b) => a.participantId - b.participantId);
+  let rest = priceCents - shares.reduce((s, x) => s + x.amountCents, 0);
+
+  const recipient = restRecipientId === null ? undefined : shares.find((s) => s.participantId === restRecipientId);
+  if (recipient) {
+    recipient.amountCents += rest;
+    rest = 0;
+  }
+  return { shares, restCents: rest };
 }

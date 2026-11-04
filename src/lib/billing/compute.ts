@@ -35,6 +35,8 @@ export interface SubscriptionBreakdown {
   name: string;
   priceCents: number;
   lines: ShareLine[];
+  /** Rundungsrest, der beim Admin verbleibt, wenn er selbst nicht im Abo ist (Summe lines + restCents = priceCents). */
+  restCents: number;
 }
 export interface ParticipantTotal {
   participantId: number;
@@ -69,6 +71,7 @@ export function computeMonth(
   participants: ParticipantInput[],
 ): MonthResult {
   assertMonth(month);
+  const ownerId = participants.find((p) => p.isOwner)?.id ?? null;
   const breakdowns: SubscriptionBreakdown[] = [];
   const totals = new Map<number, number>();
 
@@ -77,7 +80,7 @@ export function computeMonth(
     if (price === null) continue;
     const members = activeMemberships(sub.memberships, month);
     if (members.length === 0) continue;
-    const shares = allocate(price, members);
+    const { shares, restCents } = allocate(price, members, ownerId);
     const totalWeight = members.reduce((s, m) => s + m.weight, 0);
     const lines: ShareLine[] = shares.map((s) => ({
       participantId: s.participantId,
@@ -86,7 +89,7 @@ export function computeMonth(
       amountCents: s.amountCents,
     }));
     for (const l of lines) totals.set(l.participantId, (totals.get(l.participantId) ?? 0) + l.amountCents);
-    breakdowns.push({ subscriptionId: sub.id, name: sub.name, priceCents: price, lines });
+    breakdowns.push({ subscriptionId: sub.id, name: sub.name, priceCents: price, lines, restCents });
   }
 
   const byId = new Map(participants.map((p) => [p.id, p]));
