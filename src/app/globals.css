@@ -71,7 +71,14 @@ a { color: inherit; }
 .stack > * + * { margin-top: 14px; }
 .grid2 { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
 @media (max-width: 460px) { .grid2--stack { grid-template-columns: 1fr; } }
-.qrs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.qrs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 460px; }
+/* Auf dem Handy braucht es keine QR-Codes: PayPal-Button und Überweisungsdaten genügen. */
+@media (max-width: 640px) { .qrs { display: none; } }
+details.bank summary { list-style: none; }
+details.bank summary::-webkit-details-marker { display: none; }
+details.bank summary::after { content: "+"; margin-left: auto; font-family: var(--font-mono); font-size: 20px; }
+details.bank[open] summary::after { content: "–"; }
+details.bank summary.btn { justify-content: space-between; }
 
 /* Betrag */
 .total { font-family: var(--font-mono); font-weight: 500; font-size: clamp(40px, 12vw, 60px); line-height: 1.05; letter-spacing: -0.02em; margin: 6px 0 10px; font-variant-numeric: tabular-nums; }

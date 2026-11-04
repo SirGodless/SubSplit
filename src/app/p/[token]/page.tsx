@@ -75,6 +75,17 @@ export default async function ParticipantPage({ params, searchParams }: { params
               <a className="btn btn--primary btn--block" href={links.paypalUrl} target="_blank" rel="noopener noreferrer">
                 Mit PayPal bezahlen · {formatEuro(pay.amountCents)}
               </a>
+              <div className="panel">
+                <p className="label">Referenz-ID</p>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "6px 0 10px" }}>
+                  <span className="ref">{links.referenceId}</span>
+                  <CopyButton value={links.referenceId} />
+                </div>
+                <p className="muted" style={{ margin: 0, fontSize: 14 }}>
+                  Bitte als Notiz bei PayPal angeben, der Link kann sie nicht vorausfüllen. Bei einer Überweisung steht sie im Verwendungszweck.
+                </p>
+              </div>
+
               <div className="qrs">
                 <figure style={{ margin: 0 }}>
                   <div className="qr" role="img" aria-label="QR-Code für PayPal" dangerouslySetInnerHTML={{ __html: links.paypalQrSvg }} />
@@ -86,24 +97,15 @@ export default async function ParticipantPage({ params, searchParams }: { params
                 </figure>
               </div>
 
-              <div className="panel">
-                <p className="label">Referenz-ID</p>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "6px 0 10px" }}>
-                  <span className="ref">{links.referenceId}</span>
-                  <CopyButton value={links.referenceId} />
+              <details className="bank">
+                <summary className="btn btn--block">Per Überweisung bezahlen</summary>
+                <div style={{ marginTop: 12 }}>
+                  <div className="kv"><span className="label">Empfänger</span><span className="v">{links.recipientName}</span><span /></div>
+                  <div className="kv"><span className="label">IBAN</span><span className="v">{links.iban.replace(/(.{4})/g, "$1 ").trim()}</span><CopyButton value={links.iban} /></div>
+                  <div className="kv"><span className="label">Betrag</span><span className="v">{formatEuro(pay.amountCents)}</span><span /></div>
+                  <div className="kv"><span className="label">Zweck</span><span className="v">{links.remittance}</span><CopyButton value={links.remittance} /></div>
                 </div>
-                <p className="muted" style={{ margin: 0, fontSize: 14 }}>
-                  Bitte als Notiz bei PayPal angeben. Der PayPal-Link kann die Notiz nicht vorausfüllen. Beim GiroCode ist sie im Verwendungszweck schon enthalten.
-                </p>
-              </div>
-
-              <div>
-                <p className="label" style={{ marginBottom: 8 }}>Banküberweisung</p>
-                <div className="kv"><span className="label">Empfänger</span><span className="v">{links.recipientName}</span><span /></div>
-                <div className="kv"><span className="label">IBAN</span><span className="v">{links.iban.replace(/(.{4})/g, "$1 ").trim()}</span><CopyButton value={links.iban} /></div>
-                <div className="kv"><span className="label">Betrag</span><span className="v">{formatEuro(pay.amountCents)}</span><span /></div>
-                <div className="kv"><span className="label">Zweck</span><span className="v">{links.remittance}</span><CopyButton value={links.remittance} /></div>
-              </div>
+              </details>
 
               <PaidButton token={token} month={view.month} marked={pay.status === "marked_paid"} />
             </div>

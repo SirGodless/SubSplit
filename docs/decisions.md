@@ -59,3 +59,4 @@
 - QR-Codes bleiben immer schwarz auf weiß (Scanbarkeit) und stehen mobil nebeneinander; sie sind nachrangig gegenüber dem PayPal-Button und den kopierbaren Bankdaten.
 - Teilnehmer-Seite ruft die Services direkt (Server Component), nicht die API; gleiche Token-Prüfung, gleiche Logzeilen, gleiche 404-Seite für unbekannte und widerrufene Links.
 - Admin-Oberfläche ist eine Client-App gegen die Admin-API (Übersicht, Abos, Teilnehmer).
+- **Mobil keine QR-Codes** (Breite <= 640 px): PayPal-Button öffnet den Link, "Per Überweisung bezahlen" klappt die Bankdaten mit Kopieren-Buttons auf. QR-Codes (PayPal und GiroCode) erscheinen nur am Desktop. Einen Link, der eine Banking-App mit vorausgefülltem GiroCode öffnet, gibt es nach meinem Kenntnisstand nicht (EPC definiert nur das QR-Textformat, keine URL); eine Spezifikation dafür habe ich nicht gefunden.
