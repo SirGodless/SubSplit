@@ -11,3 +11,4 @@ tests
 next-env.d.ts
 Dockerfile
 docker-compose.yml
+dkim

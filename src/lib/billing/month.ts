@@ -40,3 +40,20 @@ export function berlinDate(now: Date = new Date(), timeZone = "Europe/Berlin"): 
 export function dueDateOf(month: Month, dueDay: number): string {
   return `${assertMonth(month)}-${String(dueDay).padStart(2, "0")}`;
 }
+
+/** Datum "YYYY-MM-DD" plus/minus Tage (reine Kalenderrechnung, ohne Zeitzonen-Effekte). */
+export function addDays(date: string, days: number): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/** Stunde (0-23) in der angegebenen Zeitzone (Standard: Europe/Berlin). */
+export function berlinHour(now: Date = new Date(), timeZone = "Europe/Berlin"): number {
+  return Number(new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now));
+}
+
+/** Erinnerungen gehen nur zwischen 8 und 20 Uhr (Berlin) raus. */
+export function inSendWindow(now: Date = new Date()): boolean {
+  const h = berlinHour(now);
+  return h >= 8 && h < 20;
+}

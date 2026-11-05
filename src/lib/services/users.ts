@@ -171,7 +171,14 @@ export function setDisabled(db: Db, targetId: number, disabled: boolean, actingU
 export function updateProfile(db: Db, userId: number, input: { displayName?: string; email?: string | null }): void {
   const set: Partial<typeof users.$inferInsert> = {};
   if (input.displayName !== undefined) set.displayName = cleanDisplayName(input.displayName);
-  if (input.email !== undefined) set.email = normalizeEmail(input.email);
+  if (input.email !== undefined) {
+    const email = normalizeEmail(input.email);
+    const cur = db.select({ email: users.email }).from(users).where(eq(users.id, userId)).get();
+    if (cur && cur.email !== email) {
+      set.email = email;
+      set.emailVerifiedAt = null; // neue Adresse muss neu bestätigt werden
+    }
+  }
   if (Object.keys(set).length === 0) return;
   if (db.update(users).set(set).where(eq(users.id, userId)).run().changes === 0) throw new AppError("not_found", "Konto nicht gefunden.");
 }

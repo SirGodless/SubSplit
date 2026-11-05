@@ -14,9 +14,9 @@ import { getPayerView } from "@/lib/services/views";
 export const dynamic = "force-dynamic";
 
 export default async function PayPage({ params, searchParams }: { params: Promise<{ recipientId: string }>; searchParams: Promise<{ month?: string }> }) {
-  const auth = await getPageUser();
-  if (!auth) redirect("/login");
   const { recipientId } = await params;
+  const auth = await getPageUser();
+  if (!auth) redirect(`/login?next=${encodeURIComponent(`/pay/${recipientId}`)}`); // z. B. aus der Erinnerungs-Mail
   const { month: requested } = await searchParams;
   if (!/^\d{1,9}$/.test(recipientId)) notFound();
   const c = ctx();

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { setCsrf } from "@/lib/client/api";
 
-export default function LoginForm() {
+export default function LoginForm({ next }: { next: string | null }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -19,7 +19,7 @@ export default function LoginForm() {
       });
       if (res.ok) {
         setCsrf(((await res.json()) as { csrfToken: string }).csrfToken);
-        window.location.href = "/";
+        window.location.href = next ?? "/";
         return;
       }
       setError(res.status === 429 ? "Zu viele Versuche. Bitte später erneut versuchen." : "Anmeldung fehlgeschlagen.");

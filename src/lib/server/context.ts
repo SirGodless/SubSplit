@@ -35,3 +35,14 @@ export function clientIp(headers: Headers): string {
 }
 
 export const secureCookies = () => ctx().config.baseUrl.startsWith("https:");
+
+/** Konfiguration für Mails (null, wenn der Server keine E-Mails verschickt). */
+export function mailCtx(): { appName: string; baseUrl: string; secret: string } | null {
+  const c = ctx().config;
+  return c.mail ? { appName: c.appName, baseUrl: c.baseUrl, secret: c.sessionSecret } : null;
+}
+
+/** Stößt den Versand des Postausgangs an (nach dem Anlegen einer Mail). */
+export function kickMail(): void {
+  (globalThis as unknown as { __subsplitMailKick?: () => void }).__subsplitMailKick?.();
+}

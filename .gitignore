@@ -7,3 +7,6 @@ next-env.d.ts
 .env.local
 /data
 /logs
+
+# DKIM-Schlüssel des Mail-Containers (geheim, nie einchecken)
+/dkim

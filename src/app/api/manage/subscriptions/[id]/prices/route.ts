@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { ctx } from "@/lib/server/context";
+import { ctx, kickMail, mailCtx } from "@/lib/server/context";
 import { intParam, userRoute } from "@/lib/server/http";
-import { setPrice } from "@/lib/services/manage";
+import { setPriceAndNotify } from "@/lib/services/notify";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,7 @@ const body = z.object({ validFromMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])
 
 export const POST = userRoute<{ id: string }>(async ({ user, params, readBody }) => {
   const input = body.parse(await readBody());
-  setPrice(ctx().db, user.id, intParam(params.id), input.validFromMonth, input.priceCents);
-  return { ok: true };
+  const queued = setPriceAndNotify(ctx().db, mailCtx(), user.id, intParam(params.id), input.validFromMonth, input.priceCents);
+  if (queued > 0) kickMail();
+  return { ok: true, notified: queued };
 });

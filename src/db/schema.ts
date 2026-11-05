@@ -17,6 +17,8 @@ export const users = sqliteTable("users", {
   /** Für Mitzahler im selben Abo sichtbar. */
   displayName: text("display_name").notNull(),
   email: text("email"),
+  /** Erst nach Bestätigung der Adresse bekommt sie E-Mails (außer der Bestätigungsmail selbst). */
+  emailVerifiedAt: text("email_verified_at"),
   role: text("role", { enum: ["operator", "user"] }).notNull().default("user"),
   /** null = Konto noch nicht eingerichtet (Einrichtungslink offen). */
   passwordHash: text("password_hash"),
@@ -32,8 +34,9 @@ export const users = sqliteTable("users", {
   iban: text("iban"),
   /** Fälligkeitstag im Monat (1-28), gilt für die Abos dieses Empfängers. */
   dueDay: integer("due_day").notNull().default(1),
-  /** Phase 2. */
+  /** E-Mail-Einstellungen des Kontos: Zahlungserinnerungen und Infos zu Preisänderungen. */
   remindersEnabled: integer("reminders_enabled", { mode: "boolean" }).notNull().default(true),
+  priceMailsEnabled: integer("price_mails_enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull().default(now),
   lastLoginAt: text("last_login_at"),
 }, (t) => [check("users_due_day_ck", sql`${t.dueDay} BETWEEN 1 AND 28`)]);
@@ -146,7 +149,50 @@ export const standingOrders = sqliteTable(
   ],
 );
 
-/** Phase 2: verhindert Doppelversand, dient als Nachweis. Im MVP ungenutzt. */
+/**
+ * Bestätigungslinks für E-Mail-Adressen (Double-Opt-In). Der Token liegt nur als Hash in der Datenbank.
+ */
+export const emailVerifications = sqliteTable(
+  "email_verifications",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: text("expires_at").notNull(),
+    usedAt: text("used_at"),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("email_verifications_user_idx").on(t.userId)],
+);
+
+/**
+ * Postausgang: jede zu versendende Mail. `dedupe_key` verhindert Doppelversand; nach dem Versand werden Adresse und
+ * Text geleert, es bleiben Typ, Status und Zeitpunkte als Nachweis.
+ */
+export const mailOutbox = sqliteTable(
+  "mail_outbox",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    toUserId: integer("to_user_id").references(() => users.id, { onDelete: "set null" }),
+    toAddress: text("to_address"),
+    type: text("type", { enum: ["verify_email", "reminder", "price_change", "test"] }).notNull(),
+    dedupeKey: text("dedupe_key").unique(),
+    subject: text("subject").notNull(),
+    bodyText: text("body_text").notNull(),
+    /** Link für den Header List-Unsubscribe (One-Click). */
+    unsubscribeUrl: text("unsubscribe_url"),
+    status: text("status", { enum: ["pending", "sent", "failed"] }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    nextAttemptAt: text("next_attempt_at").notNull().default(now),
+    createdAt: text("created_at").notNull().default(now),
+    sentAt: text("sent_at"),
+  },
+  (t) => [index("mail_outbox_status_idx").on(t.status, t.nextAttemptAt)],
+);
+
+/** Früher für Erinnerungen vorgesehen, ersetzt durch mail_outbox. Bleibt ungenutzt bestehen (keine Datenmigration nötig). */
 export const reminderLog = sqliteTable(
   "reminder_log",
   {

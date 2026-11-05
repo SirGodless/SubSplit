@@ -14,6 +14,9 @@ Dieselbe Person kann bei anderen wiederum **Mitzahler** sein.
 - **Empfänger-Ansicht:** Übersicht mit Gesamtkosten, bezahlt/offen und Verlauf, Abos mit Preisen und Beteiligten.
 - **Betreiber:** sieht alle Konten, setzt Passwörter zurück und sperrt Konten, sieht aber keine Beträge, Zahlungsdaten
   oder Teilnehmer anderer, nur eine grobe Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem.
+- **E-Mails (optional, aus, solange `SMTP_HOST` fehlt):** Zahlungserinnerung, Info bei Preisänderung, Adress-Bestätigung
+  und Test-Mail. Keine IBAN, kein PayPal-Link, keine Antwortmöglichkeit; jede Erinnerung/Preis-Mail hat einen
+  Abmelde-Link. Siehe Abschnitt „E-Mail“.
 - Alle Beträge sind Integer-Cent. Anteile werden **auf den vollen Cent abgerundet**, der Rest (höchstens Beteiligte − 1
   Cent pro Abo und Monat) bleibt beim Empfänger.
 - Stack: TypeScript, Next.js (App Router), SQLite mit Drizzle, **verschlüsselte Datenbankdatei**, ein Docker-Container.
@@ -151,9 +154,78 @@ Benutzer, Empfängerdaten und Fälligkeitstag liegen **nicht** in der `.env`, so
 | `PROXY_NETWORK` | nein | Name des externen Docker-Netzwerks (Standard `proxy`), nur für `docker-compose.yml`. |
 | `UNUSUAL_MONTHLY_TOTAL_EUR`, `UNUSUAL_FACTOR` | nein | Warnung beim Betreiber, wenn die Monatssumme eines Empfängers den festen Wert (Standard 500 €) erreicht oder das X-Fache (Standard 3) des Durchschnitts der letzten 3 Monate übersteigt. |
 | `PAYPAL_LINK_BASE`, `PAYPAL_APPEND_CURRENCY`, `PAYPAL_DECIMAL` | nein | Linkformat von PayPal, siehe „Bekannte Unsicherheiten“. |
-| `SMTP_*` | – | Erst in Phase 2. |
+| `SMTP_HOST` | nein | SMTP-Server. **Ohne diesen Wert sind alle E-Mails aus.** Mit dem mitgelieferten Mail-Container: `mail`. |
+| `SMTP_PORT` | nein | Standard 587 (465 bei `SMTP_SECURITY=tls`). |
+| `SMTP_SECURITY` | nein | `starttls` (Standard, TLS erzwungen), `tls` (Port 465) oder `internal` (nur für den eigenen Mail-Container im Docker-Netz: TLS opportunistisch, ohne Zertifikatsprüfung, keine Zugangsdaten). |
+| `SMTP_USER`, `SMTP_PASSWORD` | nein | Zugangsdaten, nur zusammen. |
+| `MAIL_FROM` | ja, wenn `SMTP_HOST` | Absender, z. B. `SubSplit <noreply@anfall.net>`. |
+| `MAIL_DOMAIN`, `MAIL_HOSTNAME` | nur Mail-Container | Absender-Domain (`anfall.net`) und Hostname des Mail-Containers (`mail.anfall.net`). |
+| `REMINDER_FIRST_DAYS_AFTER_DUE` | nein | Erste Erinnerung so viele Tage nach dem Fälligkeitstag (0–28, Standard 3). |
+| `REMINDER_REPEAT_DAYS` | nein | Abstand weiterer Erinnerungen (1–60, Standard 7). |
+| `REMINDER_MAX_PER_PAYMENT` | nein | Höchstzahl Erinnerungen je offener Zahlung (1–10, Standard 3). |
 
 Zeitzone des Containers: `Europe/Berlin`.
+
+## E-Mail
+
+**Was verschickt wird (und nichts anderes):**
+
+1. **Adress-Bestätigung** (Double-Opt-in): Nach Eintragen/Ändern der Adresse in den Einstellungen kommt ein Link
+   (48 Stunden gültig, einmalig). Erst bestätigte Adressen bekommen weitere Mails. Ändert man die Adresse, entfällt die Bestätigung.
+2. **Zahlungserinnerung** an Mitzahler: erste Mail 3 Tage nach dem Fälligkeitstag, danach wöchentlich, höchstens 3 Mails
+   pro offener Zahlung (alles per `.env` einstellbar). Eine Mail pro Empfänger mit Gesamtbetrag und Aufschlüsselung.
+   Monate, die ein Dauerauftrag abdeckt, werden nicht erinnert. Versand nur zwischen 8 und 20 Uhr (Berlin).
+3. **Preisänderung:** Mitzahler eines Abos erfahren, was sich für sie ändert; wer per Dauerauftrag zahlt, bekommt den Hinweis,
+   den Dauerauftrag anzupassen. Der Empfänger selbst bekommt keine Mail.
+4. **Test-Mail** (Einstellungen, nur mit bestätigter Adresse, max. 3 pro Stunde).
+
+In den Mails stehen **weder IBAN noch PayPal-Link** (nur Betrag und ein Link zur App); man kann nicht antworten. Erinnerungs-
+und Preis-Mails haben einen **Abmelde-Link** und die Header `List-Unsubscribe` / `List-Unsubscribe-Post`. Beides lässt sich
+auch in den Einstellungen ein- und ausschalten. Fehlgeschlagene Mails werden mit wachsendem Abstand bis zu 5-mal wiederholt.
+
+### Eigener Mail-Server (Postfix-Container, keine Fremdanbieter, keine Zusatzkosten)
+
+Der Container `mail` (Image `boky/postfix`) liegt im Compose-File hinter dem Profil `mail` und ist nur für die App im
+internen Netz `mailnet` erreichbar (kein veröffentlichter Port). Er verschickt direkt von deinem Server.
+
+1. **`.env`** ergänzen:
+   ```
+   SMTP_HOST=mail
+   SMTP_PORT=587
+   SMTP_SECURITY=internal
+   MAIL_FROM=SubSplit <noreply@anfall.net>
+   MAIL_DOMAIN=anfall.net
+   MAIL_HOSTNAME=mail.anfall.net
+   ```
+2. **Starten** (niemals `-v`):
+   ```bash
+   docker compose --profile mail up -d --build
+   ```
+   Beim ersten Start erzeugt der Container einen DKIM-Schlüssel in `./dkim/` (`anfall.net.txt` enthält den DNS-Wert).
+   Den Ordner `dkim` sichern; ohne ihn gibt es einen neuen Schlüssel und der DNS-Eintrag muss erneuert werden.
+3. **DNS bei Hetzner** (Domain `anfall.net`, `<IP>` = öffentliche IPv4 des Servers):
+
+   | Typ | Name | Wert |
+   |---|---|---|
+   | A | `mail` | `<IP>` |
+   | TXT (SPF) | `@` | `v=spf1 ip4:<IP> -all` (es darf nur **einen** SPF-Eintrag für `anfall.net` geben; gibt es schon einen, `ip4:<IP>` dort ergänzen) |
+   | TXT (DKIM) | `mail._domainkey` | Inhalt aus `./dkim/anfall.net.txt` (die Teile in Anführungszeichen zu einem String zusammenfügen) |
+   | TXT (DMARC) | `_dmarc` | `v=DMARC1; p=none;` (nach einigen erfolgreichen Wochen ggf. auf `quarantine` verschärfen) |
+
+   Dazu der **Reverse-DNS (PTR)** der Server-IP auf `mail.anfall.net` (Hetzner Cloud Console, Server/Primary IP,
+   Reverse DNS). Passen PTR, A-Eintrag und `MAIL_HOSTNAME` nicht zusammen, nehmen viele Anbieter die Mails nicht an.
+4. **Port 25 ausgehend** muss offen sein (bei Hetzner Cloud standardmäßig gesperrt, du hast ihn laut deiner Angabe
+   freigeschaltet; prüfe auch eine eventuelle Cloud-Firewall).
+5. **Testen:** Einstellungen -> Adresse eintragen -> bestätigen -> „Test-Mail senden“, an Gmail/Outlook und die
+   Kopfzeilen prüfen (`SPF: pass`, `DKIM: pass`, `DMARC: pass`). Logs: `docker compose logs mail`.
+
+Du kannst stattdessen **jeden anderen SMTP-Server** eintragen (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY=starttls|tls`,
+`SMTP_USER`, `SMTP_PASSWORD`); dann den Mail-Container nicht starten.
+
+**Grenzen (ehrlich):** Ob Mails von einer neuen Server-IP im Posteingang landen oder im Spam, entscheiden die
+Empfänger (Reputation); das kann ich nicht garantieren. Die App sieht Rückläufer (Bounces) nicht; eine „gesendet“-Markierung
+heißt nur, dass Postfix die Mail angenommen hat. Wird der Mail-Container neu erzeugt, geht seine interne Warteschlange
+verloren (die App wiederholt aber nur, was sie selbst als fehlgeschlagen kennt).
 
 ## Caddy
 
@@ -271,6 +343,9 @@ Schutz der Verschlüsselung auf; ohne Schlüssel ist ein Backup wertlos.
   Benutzernamen und alle Zahlungen. Sie schützt vor dem **Diebstahl der Datenbankdatei oder eines Backups**, nicht vor
   jemandem, der den laufenden Server samt Schlüssel in der `.env` übernimmt. **Passwörter werden nicht verschlüsselt,
   sondern mit scrypt gehasht** (nicht zurückrechenbar).
+- **E-Mail:** Adressen liegen in der verschlüsselten Datenbank. Die Warteschlange (`mail_outbox`) löscht Adresse und Text
+  nach erfolgreichem Versand und wird nach 60 Tagen bereinigt. In Logs stehen keine Adressen oder Mail-Inhalte. Mails gehen
+  nur über deinen eigenen Server (oder den SMTP-Server, den du einträgst), nie über einen Dienst, den die App selbst wählt.
 - Gespeichert werden außerdem E-Mail-Adressen (optional) und im **Sicherheits-Log IP-Adressen** (nur für
   Sicherheitszwecke, nicht ewig aufbewahren, siehe oben). Sonst keine personenbezogenen Daten in Logs. Keine Tracker,
   keine externen Schriften oder Skripte.
@@ -312,6 +387,11 @@ Bitte vor dem Livebetrieb prüfen:
 6. **Rate-Limit** liegt im Arbeitsspeicher (eine Instanz) und wird beim Neustart zurückgesetzt. Die App ist durch SQLite
    für **genau eine Instanz** ausgelegt. Das Anmelden verbraucht bewusst Rechenzeit/Speicher (scrypt, ca. 64 MB je Versuch).
 7. **Verschlüsselung:** Verlust von `DB_ENCRYPTION_KEY` ist nicht behebbar. Ein Schlüsselwechsel ist nicht vorgesehen.
+8. **E-Mail:** Getestet mit einem lokalen SMTP-Testserver (Transport, Header, STARTTLS-Modi, Wiederholung). **Nicht getestet**
+   ist der echte Versand über `boky/postfix` im Betrieb (kein Docker-Daemon verfügbar): insbesondere der Modus `internal`
+   (opportunistisches TLS ohne Zertifikatsprüfung im Docker-Netz), die automatische DKIM-Erzeugung und die Zustellung an
+   Gmail/Outlook. Die Hetzner-Angaben (Port 25/465 gesperrt, Reverse-DNS änderbar) stammen aus Foren/Drittquellen, nicht aus
+   der offiziellen Dokumentation. Der erste Test-Mail-Lauf auf deinem Server ist der eigentliche Test.
 
 ## Entwicklung
 
@@ -326,7 +406,7 @@ Wichtige Stellen: Berechnung `src/lib/billing`, Zahlungslinks `src/lib/pay`, Sic
 Konten und Login `src/lib/services/users.ts`, Verwaltung pro Empfänger `src/lib/services/manage.ts`, Zahlungen und
 Rückstand `src/lib/services/payments.ts`, Sichten mit serverseitiger Sichtbarkeit `src/lib/services/views.ts`.
 
-## Phase 2 (noch nicht umgesetzt)
+## Offen
 
-E-Mail-Erinnerungen per SMTP (Tabelle `reminder_log`, Feld „Erinnerungen erhalten“ und E-Mail-Feld sind im Datenmodell
-vorbereitet) kommen erst nach deiner Freigabe.
+Nicht umgesetzt: Bounce-Auswertung, Einstellungen pro Zahler zum Pausieren einzelner Erinnerungen (bewusst gestrichen),
+automatische Host-Backups.

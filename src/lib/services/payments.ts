@@ -80,6 +80,16 @@ export function ensureOwnerPayments(db: Db, ownerId: number, now: Date = new Dat
 }
 
 /**
+ * Legt die Zahlungen ALLER Empfänger an und wendet Daueraufträge an. Der Planer ruft das regelmäßig auf: Zahlungen
+ * entstehen sonst erst beim Aufruf der App, ohne diesen Schritt gäbe es in einem Monat ohne Besucher keine
+ * Erinnerungen und keine automatische Bestätigung per Dauerauftrag.
+ */
+export function ensureAllOwnerPayments(db: Db, now: Date = new Date()): void {
+  const owners = db.selectDistinct({ id: subscriptions.ownerUserId }).from(subscriptions).all();
+  for (const o of owners) ensureOwnerPayments(db, o.id, now);
+}
+
+/**
  * Daueraufträge: Offene Zahlungen eines Zahlers mit Dauerauftrag werden ab dessen Startmonat am Fälligkeitstag des
  * Monats automatisch BESTÄTIGT (Vermerk "auto"). Frühere Monate (Rückstand vor dem Startmonat) und noch nicht fällige
  * Monate bleiben offen. Vom Empfänger zurückgesetzte Zahlungen ("skipped") werden nicht erneut automatisch bezahlt.

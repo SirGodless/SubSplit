@@ -15,6 +15,7 @@ services:
       - "3000" # nur im Docker-Netzwerk, nicht auf den Host veröffentlicht
     networks:
       - proxy
+      - mailnet # nur nötig für den optionalen Mail-Container (Profil "mail")
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -27,11 +28,31 @@ services:
       retries: 3
     stop_grace_period: 20s
 
+  # Optionaler Mail-Container: verschickt die E-Mails der App direkt von deinem Server (ohne Fremdanbieter).
+  # Start: docker compose --profile mail up -d   (Anleitung: README, Abschnitt "E-Mail")
+  mail:
+    image: boky/postfix
+    profiles: ["mail"]
+    container_name: subsplit-mail
+    restart: unless-stopped
+    environment:
+      ALLOWED_SENDER_DOMAINS: ${MAIL_DOMAIN:-example.invalid}
+      POSTFIX_myhostname: ${MAIL_HOSTNAME:-mail.example.invalid}
+      POSTFIX_inet_protocols: ipv4 # nur IPv4: ein PTR/SPF-Eintrag genügt
+      DKIM_AUTOGENERATE: "1"
+      DKIM_SELECTOR: mail
+    volumes:
+      - ./dkim:/etc/opendkim/keys # DKIM-Schlüssel dauerhaft (sonst gibt es bei jedem Start neue)
+    networks:
+      - mailnet
+    # Kein "ports": der Container ist nur für die App im Docker-Netz "mailnet" erreichbar.
+
 volumes:
   subsplit-data:
     name: subsplit-data
 
 networks:
+  mailnet: {}
   proxy:
     external: true
     name: ${PROXY_NETWORK:-proxy}

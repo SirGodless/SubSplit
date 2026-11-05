@@ -114,3 +114,37 @@ describe("Einladungen per Umgebung", () => {
     for (const bad of ["-1", "101", "abc", "2.5", "1000"]) expect(problems({ ...valid, INVITATIONS_MAX_ACTIVE: bad }).join(), bad).toMatch(/INVITATIONS_MAX_ACTIVE/);
   });
 });
+
+describe("E-Mail per Umgebung", () => {
+  const smtp = { SMTP_HOST: "smtp.example.org", MAIL_FROM: "SubSplit <noreply@anfall.net>" };
+  it("ohne SMTP_HOST kein Mailversand, Standard-Rhythmus der Erinnerungen", () => {
+    const c = loadConfig(valid);
+    expect(c.mail).toBeNull();
+    expect(c.reminders).toEqual({ firstDaysAfterDue: 3, repeatDays: 7, maxPerPayment: 3 });
+  });
+  it("Standardwerte mit STARTTLS und Port 587; Absenderadresse wird erkannt", () => {
+    expect(loadConfig({ ...valid, ...smtp }).mail).toEqual({ host: "smtp.example.org", port: 587, security: "starttls", user: null, password: null, from: "SubSplit <noreply@anfall.net>", fromAddress: "noreply@anfall.net" });
+    expect(loadConfig({ ...valid, ...smtp, MAIL_FROM: "noreply@anfall.net" }).mail!.fromAddress).toBe("noreply@anfall.net");
+  });
+  it("Sicherheitsarten, Port-Standard und Zugangsdaten", () => {
+    expect(loadConfig({ ...valid, ...smtp, SMTP_SECURITY: "tls" }).mail).toMatchObject({ security: "tls", port: 465 });
+    expect(loadConfig({ ...valid, ...smtp, SMTP_SECURITY: "internal", SMTP_HOST: "mail" }).mail).toMatchObject({ security: "internal", port: 587 });
+    expect(loadConfig({ ...valid, ...smtp, SMTP_PORT: "2525", SMTP_USER: "u", SMTP_PASSWORD: "p" }).mail).toMatchObject({ port: 2525, user: "u", password: "p" });
+  });
+  it("lehnt ungültige Angaben ab, nennt nie das Passwort", () => {
+    expect(problems({ ...valid, SMTP_HOST: "smtp.example.org" }).join()).toMatch(/MAIL_FROM fehlt/);
+    for (const bad of ["kein-absender", "<>", "Name <a@b>", "a b@example.org", "x@@example.org"]) expect(problems({ ...valid, ...smtp, MAIL_FROM: bad }).join(), bad).toMatch(/MAIL_FROM/);
+    expect(problems({ ...valid, ...smtp, SMTP_SECURITY: "ssl" }).join()).toMatch(/SMTP_SECURITY/);
+    for (const bad of ["0", "70000", "abc"]) expect(problems({ ...valid, ...smtp, SMTP_PORT: bad }).join(), bad).toMatch(/SMTP_PORT/);
+    expect(problems({ ...valid, ...smtp, SMTP_USER: "u" }).join()).toMatch(/zusammen gesetzt/);
+    const m = problems({ ...valid, ...smtp, SMTP_SECURITY: "internal", SMTP_USER: "u", SMTP_PASSWORD: "geheim-pw" }).join();
+    expect(m).toMatch(/internal/);
+    expect(m).not.toContain("geheim-pw");
+  });
+  it("Rhythmus der Erinnerungen einstellbar und geprüft", () => {
+    expect(loadConfig({ ...valid, REMINDER_FIRST_DAYS_AFTER_DUE: "2", REMINDER_REPEAT_DAYS: "5", REMINDER_MAX_PER_PAYMENT: "4" }).reminders).toEqual({ firstDaysAfterDue: 2, repeatDays: 5, maxPerPayment: 4 });
+    expect(loadConfig({ ...valid, REMINDER_FIRST_DAYS_AFTER_DUE: "0" }).reminders.firstDaysAfterDue).toBe(0);
+    for (const [k, bad] of [["REMINDER_FIRST_DAYS_AFTER_DUE", "29"], ["REMINDER_REPEAT_DAYS", "0"], ["REMINDER_MAX_PER_PAYMENT", "11"], ["REMINDER_MAX_PER_PAYMENT", "abc"]] as const)
+      expect(problems({ ...valid, [k]: bad }).join(), `${k}=${bad}`).toMatch(new RegExp(k));
+  });
+});

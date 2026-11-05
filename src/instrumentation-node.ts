@@ -29,6 +29,27 @@ export async function startup() {
 
   installPeerHook();
 
+  // E-Mail-Versand (optional): nur aktiv, wenn SMTP_HOST gesetzt ist.
+  if (config.mail) {
+    const { createSmtpTransport } = await import("@/lib/mail/transport");
+    const { startMailScheduler } = await import("@/lib/mail/scheduler");
+    const { getDbHandle } = await import("@/db/client");
+    const { safeError } = await import("@/lib/services/mail");
+    const transport = createSmtpTransport(config.mail);
+    const scheduler = startMailScheduler({
+      db: getDbHandle().db,
+      transport,
+      ctx: { appName: config.appName, baseUrl: config.baseUrl, secret: config.sessionSecret, settings: config.reminders },
+    });
+    (globalThis as unknown as { __subsplitMailKick?: () => void }).__subsplitMailKick = scheduler.kick;
+    transport.verify().then(
+      () => console.log(`E-Mail-Versand aktiv (SMTP ${config.mail!.host}:${config.mail!.port}, ${config.mail!.security}), Absender ${config.mail!.fromAddress}.`),
+      (err) => console.error(`E-Mail-Versand konfiguriert, aber der SMTP-Server ist nicht erreichbar: ${safeError(err)} (Versuche werden wiederholt, sobald er antwortet.)`),
+    );
+  } else {
+    console.log("E-Mail-Versand ist aus (SMTP_HOST nicht gesetzt).");
+  }
+
   const shutdown = (signal: string) => {
     console.log(`${signal} empfangen, fahre herunter.`);
     closeDatabase();

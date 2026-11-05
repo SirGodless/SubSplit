@@ -8,6 +8,33 @@ export interface InviteSettings {
   maxActive: number;
 }
 
+/** SMTP-Zugang für den Mailversand (nur vorhanden, wenn SMTP_HOST gesetzt ist). */
+export interface MailConfig {
+  host: string;
+  port: number;
+  /**
+   * starttls = STARTTLS erzwingen und Zertifikat prüfen (Port 587), tls = TLS von Anfang an (Port 465),
+   * internal = nur für den mitgelieferten Mail-Container im Docker-Netz: TLS falls angeboten, Zertifikat wird nicht
+   * geprüft, nie mit Zugangsdaten.
+   */
+  security: "starttls" | "tls" | "internal";
+  user: string | null;
+  password: string | null;
+  /** Vollständiger Absender, z. B. "SubSplit <noreply@anfall.net>". */
+  from: string;
+  fromAddress: string;
+}
+
+/** Wann Zahlungserinnerungen verschickt werden. */
+export interface ReminderSettings {
+  /** Erste Erinnerung so viele Tage nach dem Fälligkeitstag. */
+  firstDaysAfterDue: number;
+  /** Danach höchstens alle so viele Tage. */
+  repeatDays: number;
+  /** Höchstens so viele Erinnerungen pro (neuester) Monatszahlung. */
+  maxPerPayment: number;
+}
+
 export interface Config {
   appName: string;
   baseUrl: string;
@@ -25,6 +52,9 @@ export interface Config {
   unusualMonthlyTotalCents: number;
   unusualFactor: number;
   invite: InviteSettings;
+  /** null = es werden keine E-Mails verschickt. */
+  mail: MailConfig | null;
+  reminders: ReminderSettings;
 }
 
 export class ConfigError extends Error {
@@ -132,6 +162,42 @@ export function loadConfig(env: Env = process.env): Config {
     else invite.maxActive = Number(maxRaw);
   }
 
+  // --- E-Mail (optional) ---
+  let mail: MailConfig | null = null;
+  const smtpHost = get("SMTP_HOST");
+  if (smtpHost) {
+    const secRaw = (get("SMTP_SECURITY") || "starttls").toLowerCase();
+    const security = secRaw === "tls" || secRaw === "internal" || secRaw === "starttls" ? secRaw : null;
+    if (!security) problems.push('SMTP_SECURITY muss "starttls", "tls" oder "internal" sein.');
+    const defaultPort = security === "tls" ? 465 : 587;
+    const portRaw = get("SMTP_PORT");
+    let port = defaultPort;
+    if (portRaw) {
+      port = Number(portRaw);
+      if (!/^\d{1,5}$/.test(portRaw) || port < 1 || port > 65535) problems.push("SMTP_PORT muss eine Portnummer von 1 bis 65535 sein.");
+    }
+    const user = get("SMTP_USER") || null;
+    const password = get("SMTP_PASSWORD") || null;
+    if (!!user !== !!password) problems.push("SMTP_USER und SMTP_PASSWORD müssen zusammen gesetzt werden (oder beide leer).");
+    if (security === "internal" && (user || password)) problems.push('SMTP_SECURITY=internal prüft kein Zertifikat und ist nur ohne SMTP_USER/SMTP_PASSWORD erlaubt (für den mitgelieferten Mail-Container).');
+    const from = get("MAIL_FROM");
+    const addr = "[^<>\\s@\"]+@[^<>\\s@\"]+\\.[^<>\\s@\"]{2,}";
+    const m = from ? new RegExp(`^(?:[^<>\\r\\n]{1,80}?\\s*<(${addr})>|(${addr}))$`).exec(from) : null;
+    if (!from) problems.push('MAIL_FROM fehlt (z. B. "SubSplit <noreply@anfall.net>"), nötig sobald SMTP_HOST gesetzt ist.');
+    else if (!m) problems.push('MAIL_FROM ist keine gültige Absenderadresse (z. B. "SubSplit <noreply@anfall.net>").');
+    if (security && m) mail = { host: smtpHost, port, security, user, password, from, fromAddress: (m[1] ?? m[2])! };
+  }
+  const reminders: ReminderSettings = { firstDaysAfterDue: 3, repeatDays: 7, maxPerPayment: 3 };
+  const intIn = (key: string, min: number, max: number, set: (n: number) => void) => {
+    const raw = get(key);
+    if (!raw) return;
+    if (!/^\d{1,3}$/.test(raw) || Number(raw) < min || Number(raw) > max) problems.push(`${key} muss eine ganze Zahl von ${min} bis ${max} sein.`);
+    else set(Number(raw));
+  };
+  intIn("REMINDER_FIRST_DAYS_AFTER_DUE", 0, 28, (n) => (reminders.firstDaysAfterDue = n));
+  intIn("REMINDER_REPEAT_DAYS", 1, 60, (n) => (reminders.repeatDays = n));
+  intIn("REMINDER_MAX_PER_PAYMENT", 1, 10, (n) => (reminders.maxPerPayment = n));
+
   const trustedProxyCidrs = get("TRUSTED_PROXY_CIDR")
     .split(",")
     .map((s) => s.trim())
@@ -156,6 +222,8 @@ export function loadConfig(env: Env = process.env): Config {
     unusualMonthlyTotalCents,
     unusualFactor,
     invite,
+    mail,
+    reminders,
   };
 }
 
