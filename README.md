@@ -72,9 +72,22 @@ cp .env.example .env
 
    Link öffnen, Passwort festlegen, fertig. Solange das Passwort nicht gesetzt ist, steht bei jedem Start ein neuer Link im Log.
 
-> **Update von einer älteren Version (Einzelnutzer mit Magic-Links):** Die alte, unverschlüsselte Datenbank wird nicht
-> übernommen und von der App abgelehnt. Leere das Volume mit `docker compose down -v` und starte neu. **Das löscht alle
-> bisherigen Daten.**
+## Updates
+
+Normales Update (Daten bleiben erhalten, neue Datenbank-Migrationen laufen beim Start automatisch):
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+> **Niemals `docker compose down -v` bei einem Update.** Das `-v` löscht die benannten Volumes und damit die
+> **komplette Datenbank**, unwiederbringlich. `docker compose down` ohne `-v` ist ungefährlich. Lege vor größeren
+> Updates ein Backup an (siehe „Backup“).
+>
+> Einzige Ausnahme war der einmalige Umstieg von der allerersten Einzelnutzer-Version (mit Magic-Links): Deren alte,
+> unverschlüsselte Datenbank wird nicht übernommen und von der App abgelehnt, dort musste das Volume geleert werden.
+> Das gilt **nur** für diesen Umstieg und nie mehr danach.
 
 ## Erste Schritte in der App
 
