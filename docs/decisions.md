@@ -71,3 +71,31 @@
 ## Admin-Sitzung: Inaktivitäts-Timeout
 - Vorher fest 8 Stunden ab Login. Jetzt gleitend: Jede gültige Admin-Anfrage setzt den Ablauf auf `jetzt + Timeout` (nicht `alter Ablauf + Timeout`), Standard 30 Minuten, per `ADMIN_IDLE_TIMEOUT_MINUTES` einstellbar (1-1440). Das Cookie wird bei jeder Admin-Anfrage neu gesetzt (`Max-Age` = Timeout, gleiches CSRF-Token); der Logout setzt es nicht neu.
 - Keine absolute Maximaldauer: Wer regelmäßig aktiv ist, bleibt angemeldet.
+
+---
+
+# Mehrbenutzer-Umbau (ersetzt die Einzelnutzer-Entscheidungen oben, wo sie widersprechen)
+
+## Konzept
+- **Jeder ist ein Konto** (`users`). Magic-Links entfallen komplett. Der Betreiber legt Konten an und verschickt einmalige Einrichtungslinks (7 Tage gültig, nur als Hash gespeichert), über die die Person ihr Passwort selbst festlegt. Keine offene Registrierung.
+- Ein Abo gehört einem **Empfänger** (`subscriptions.owner_user_id`). Mitzahler sind beliebige aktive Konten. Der Empfänger kann selbst Mitglied sein (bekommt den Rundungsrest, schuldet sich nichts); nie eine Zahlung an sich selbst (Constraint).
+- Eine Zahlung gilt pro (Zahler, Empfänger, Monat); bei mehreren Empfängern gibt es mehrere Zahlungen, weil die Zahlungsziele verschieden sind. Die Startseite summiert über alle Empfänger.
+- Empfängerdaten (Name, PayPal.Me, IBAN) und **Fälligkeitstag** hängen am Konto, nicht mehr an der `.env`. Mindestens IBAN oder PayPal.Me ist nötig, um Abos anzulegen (und solange man Abos hat). Die Beispiel-IBAN aus der Dokumentation wird abgelehnt.
+- Der Betreiber sieht in der Oberfläche nur Konto-Stammdaten, Status, Größenklasse der Monatssumme und eine Warnung (fester Schwellenwert, Standard 500 €, oder mehr als das 3-Fache des Durchschnitts der letzten 3 Monate; beides per `.env`). Keine Beträge, Zahlungsdaten, Teilnehmer.
+- Teilnehmer werden aus der Liste aller aktiven Konten ausgewählt (Anzeigename + Benutzername), weil das System auf Vertrauen unter Freunden beruht.
+
+## Verschlüsselung
+- Die gesamte SQLite-Datei (inkl. WAL) ist verschlüsselt, per Alias auf eine verschlüsselbare better-sqlite3-Variante (`better-sqlite3-multiple-ciphers`), Schlüssel in `DB_ENCRYPTION_KEY`. Vorab geprüft: Datei und WAL enthalten keinen Klartext, ohne/mit falschem Schlüssel nicht lesbar, Backup per `VACUUM INTO` bleibt verschlüsselt (`db.backup()` ging nicht), Prebuilds für Linux x64/arm64 sind enthalten.
+- Gewählt statt Feldverschlüsselung, weil sie alles abdeckt (auch Namen, Benutzernamen, E-Mail) und ohne Such-Hashes auskommt.
+- Schutzziel: gestohlene Datenbankdatei/Backup. Nicht: Übernahme des laufenden Servers samt Schlüssel. Passwörter werden gehasht (scrypt), nicht verschlüsselt.
+- Eine alte Klartext-Datenbank wird abgelehnt (keine Übernahme; Entwicklungsphase, vom Betreiber so gewünscht).
+
+## Anmeldung
+- Login mit Benutzername und Passwort (mindestens 12 Zeichen). Sitzung: signiertes Cookie mit Konto-ID und Sitzungsversion; Passwortwechsel und Sperre erhöhen die Version und beenden alle Sitzungen. Gleitender Inaktivitäts-Timeout (Standard 30 Minuten); ein kleiner Keep-Alive im Browser verlängert die Sitzung bei echter Aktivität auf reinen Server-Seiten.
+- Sicherheits-Log unverändert im Format: `admin_login` für fehlgeschlagene Anmeldungen, `invalid_token` für unbekannte/verbrauchte Einrichtungslinks, `NOTICE revoked_token` für abgelaufene. Der bestehende fail2ban-Filter bleibt gültig.
+- Erster Betreiber: Beim ersten Start entsteht das Konto `admin` ohne Passwort, ein einmaliger Einrichtungslink steht im Startlog.
+
+## Zahlungen
+- **Rückstand:** Offene Zahlungen aus Vormonaten werden zum Gesamtbetrag des Empfängers addiert. Die Referenz-ID der neuesten offenen Zahlung steht im Verwendungszweck (Zusatz „inkl. Rückstand“). „Ich habe bezahlt“ markiert alles Offene bei diesem Empfänger; „Bestätigen“ der neuesten Zahlung bestätigt auch frühere gemeldete Monate desselben Zahlers. Zahlungen werden für alle Monate seit der ersten Beteiligung angelegt (`ensureOwnerPayments`), damit kein Vormonat verloren geht.
+- **Austragen:** Gilt ab dem laufenden Monat, wenn der Fälligkeitstag des Empfängers noch nicht erreicht ist und für den Monat noch nichts gemeldet/bestätigt ist; sonst ab dem Folgemonat. Ist der Monat beim Empfänger durch eine fremde gemeldete Zahlung gesperrt, gilt frühestens der Folgemonat. Rückstände bleiben.
+- **Gesamtkosten:** Übersicht pro Monat mit Gesamtkosten, Soll der Mitzahler, bestätigt/gemeldet/offen, eigenem Anteil (inkl. Rundungsrest) und 12-Monats-Verlauf. Es gilt: Gesamtkosten = Soll + eigener Anteil.

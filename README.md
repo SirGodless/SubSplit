@@ -1,16 +1,20 @@
 # SubSplit
 
-Selbst gehostete Web-App, um gemeinsame Abos (Streaming, Software, …) auf mehrere Personen aufzuteilen.
-Du bezahlst alle Abos und bekommst das Geld der Teilnehmer. Jeder Teilnehmer erhält einen persönlichen
-Magic-Link (kein Konto nötig) und sieht dort **eine Gesamtsumme pro Monat**, die Aufschlüsselung pro Abo
-und genau einen PayPal-Link bzw. die Bankdaten (am Desktop zusätzlich PayPal-QR und GiroCode).
+Selbst gehostete Web-App, um gemeinsame Abos (Streaming, Software, …) unter Freunden aufzuteilen. Jeder hat ein
+Konto. Wer ein Abo bezahlt, ist dessen **Empfänger**: Er legt das Abo an, trägt Mitzahler ein und bekommt das Geld.
+Dieselbe Person kann bei anderen wiederum **Mitzahler** sein.
 
-- Alle Beträge sind Integer-Cent. Anteile werden **auf den vollen Cent abgerundet**, der Rest (höchstens
-  Beteiligte − 1 Cent pro Abo und Monat) bleibt beim Admin. Die Summe der Zeilen entspricht immer dem Abo-Preis.
-- Transparenz: Mitzahler eines Abos sehen Anzeigenamen, Gewichte, Prozentanteile und Beträge aller Beteiligten
-  dieses Abos. Alles andere (E-Mail, Links, Referenz-IDs und Status anderer, fremde Abos) liefert der Server
-  gar nicht erst aus.
-- Stack: TypeScript, Next.js (App Router), SQLite mit Drizzle, ein Docker-Container.
+- **Konten für alle:** Der Betreiber legt Konten an und schickt jeder Person einen **einmaligen Einrichtungslink**,
+  über den sie ihr eigenes Passwort festlegt. Es gibt keine offene Registrierung und keine Magic-Links mehr.
+- **Startseite:** Pro Empfänger steht der offene Betrag (laufender Monat **plus Rückstand** aus Vormonaten), dazu der
+  Gesamtbetrag über alle Empfänger. Ein Klick führt zur Zahlungsseite mit PayPal-Link, Bankdaten, Referenz-ID und der
+  Aufschlüsselung pro Abo (wer zahlt wie viel, damit nachprüfbar ist, dass nicht mehr verlangt wird als nötig).
+- **Empfänger-Ansicht:** Übersicht mit Gesamtkosten, bezahlt/offen und Verlauf, Abos mit Preisen und Beteiligten.
+- **Betreiber:** verwaltet nur Konten und sieht keine Beträge, Zahlungsdaten oder Teilnehmer anderer, nur eine grobe
+  Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem.
+- Alle Beträge sind Integer-Cent. Anteile werden **auf den vollen Cent abgerundet**, der Rest (höchstens Beteiligte − 1
+  Cent pro Abo und Monat) bleibt beim Empfänger.
+- Stack: TypeScript, Next.js (App Router), SQLite mit Drizzle, **verschlüsselte Datenbankdatei**, ein Docker-Container.
 
 Entscheidungen und Annahmen: [`docs/decisions.md`](docs/decisions.md).
 
@@ -23,19 +27,17 @@ git clone <dieses-repo> subsplit && cd subsplit
 cp .env.example .env
 ```
 
-1. **Passwort-Hash erzeugen** (Eingabe verdeckt; das Passwort landet nicht in der Shell-History):
+1. **Zwei Geheimnisse erzeugen** und in `.env` eintragen (verschieden, je mindestens 32 Zeichen):
 
    ```bash
-   docker compose build
-   docker run --rm -it subsplit:latest node scripts/hash-password.mjs
+   openssl rand -hex 32   # SESSION_SECRET
+   openssl rand -hex 32   # DB_ENCRYPTION_KEY
    ```
 
-   Die Ausgabe (`scrypt:…`) in `.env` bei `ADMIN_PASSWORD_HASH` eintragen. Das Format enthält bewusst kein `$`,
-   damit Docker Compose nichts interpoliert.
+   > **Sichere `DB_ENCRYPTION_KEY` getrennt von der Datenbank und den Backups** (z. B. im Passwortmanager) und ändere
+   > ihn nie im Betrieb. **Geht er verloren, sind alle Daten unwiederbringlich verloren.**
 
-2. **`.env` ausfüllen** (siehe Tabelle unten). `SESSION_SECRET` erzeugen mit `openssl rand -hex 32`.
-
-3. **Netzwerk des Proxys** ermitteln und in `.env` setzen:
+2. **Netzwerk des Proxys** ermitteln und in `.env` setzen:
 
    ```bash
    docker network inspect proxy --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
@@ -43,65 +45,85 @@ cp .env.example .env
 
    Das Ergebnis (z. B. `172.18.0.0/16`) kommt in `TRUSTED_PROXY_CIDR`. Heißt dein Netzwerk anders, setze `PROXY_NETWORK`.
 
-4. **Logverzeichnis anlegen** (der Container läuft als Benutzer `node`, UID 1000):
+3. **Logverzeichnis anlegen** (der Container läuft als Benutzer `node`, UID 1000):
 
    ```bash
    mkdir -p logs && sudo chown 1000:1000 logs
    ```
 
-5. **Starten:**
+4. **Starten:**
 
    ```bash
-   docker compose up -d
+   docker compose up -d --build
    docker compose ps        # Status "healthy" abwarten
    ```
 
-   Die Datenbank-Migration läuft beim Start automatisch. Bei ungültiger Konfiguration (z. B. falsche
-   IBAN-Prüfsumme, ungültiger PayPal-Name) bricht der Container mit einer klaren Fehlermeldung ab:
-   `docker compose logs subsplit`.
+   Bei ungültiger Konfiguration bricht der Container mit einer klaren Meldung ab: `docker compose logs subsplit`.
+   Der Port 3000 ist nur im Docker-Netzwerk erreichbar und nicht auf dem Host veröffentlicht.
 
-Der Port 3000 ist nur im Docker-Netzwerk erreichbar und nicht auf dem Host veröffentlicht.
+5. **Ersteinrichtung:** Beim allerersten Start legt die App das Betreiber-Konto `admin` an und schreibt einen
+   einmaligen Einrichtungslink ins Log (24 Stunden gültig):
+
+   ```bash
+   docker compose logs subsplit | grep Ersteinrichtung
+   ```
+
+   Link öffnen, Passwort festlegen, fertig. Solange das Passwort nicht gesetzt ist, steht bei jedem Start ein neuer Link im Log.
+
+> **Update von einer älteren Version (Einzelnutzer mit Magic-Links):** Die alte, unverschlüsselte Datenbank wird nicht
+> übernommen und von der App abgelehnt. Leere das Volume mit `docker compose down -v` und starte neu. **Das löscht alle
+> bisherigen Daten.**
 
 ## Erste Schritte in der App
 
-1. `https://<BASE_URL>/admin` öffnen und anmelden.
-2. **Teilnehmer → Teilnehmer anlegen:** zuerst dich selbst mit „Das bin ich“ (bekommt keine Zahlung und keinen Link,
-   trägt aber den Rundungsrest). Dann die Mitzahler. Den Magic-Link siehst du **nur einmal** direkt nach dem Anlegen
-   (gespeichert wird nur ein Hash); „Neuer Link“ macht den alten sofort ungültig, „Sperren“ deaktiviert ihn.
-3. **Abos:** Abo mit Preis und Startmonat anlegen, dann Beteiligungen mit Gewicht (1 = gleicher Anteil) setzen.
-4. **Übersicht:** pro Monat siehst du, wer offen ist, wer „bezahlt“ gemeldet hat, und kannst bestätigen.
+1. **Betreiber:** Reiter „Betreiber“ → „Konto anlegen“ (Benutzername und Anzeigename). Der Einrichtungslink erscheint
+   **nur einmal**; schicke ihn der Person (z. B. per Messenger). Gespeichert wird nur ein Hash. Über „Einladungslink“
+   bzw. „Passwort zurücksetzen“ erzeugst du einen neuen Link, der alte wird ungültig. Links gelten 7 Tage.
+2. **Jede Person** öffnet ihren Link und legt ihr Passwort fest (mindestens 12 Zeichen).
+3. **Wer Abos anlegen will** (Betreiber eingeschlossen), trägt unter „Einstellungen“ Zahlungsdaten ein: mindestens
+   **IBAN oder PayPal.Me**, beides ist möglich, dazu Empfängername und den **Fälligkeitstag** (1–28). Ein Konto ohne
+   Zahlungsdaten ist ein reiner Mitzahler. Die Beispiel-IBAN aus der Dokumentation wird abgelehnt.
+4. **Verwalten → Abos:** Abo mit Preis und Startmonat anlegen, dann Konten als Mitzahler mit Gewicht (1 = gleicher Anteil)
+   auswählen. Die Liste zeigt alle Konten mit Anzeigename und Benutzername (Vertrauensbasis).
+5. **Verwalten → Übersicht:** Pro Monat Gesamtkosten, was die Mitzahler schulden, bestätigt/gemeldet/offen, dein eigener
+   Anteil und ein Verlauf. Zahlungen bestätigst du mit „Bestätigen“.
+6. **Mitzahler** sehen auf ihrer Startseite, was sie schulden, zahlen und melden „Ich habe bezahlt“.
 
-Regeln für Änderungen: Preis, Gewicht und Beteiligung gelten **ab einem Monat**; vergangene Monate bleiben unverändert.
+## Regeln
 
-- Im **laufenden Monat** lässt sich alles ändern, **solange noch keine Zahlung dieses Monats als „bezahlt“ gemeldet
-  oder bestätigt ist**. Noch offene Zahlungen werden dabei automatisch neu berechnet (Referenz-ID und Status bleiben,
-  nur der Betrag ändert sich). Teile Teilnehmern also besser erst Beträge mit, wenn die Einrichtung abgeschlossen ist.
-- Meldet die erste Person „bezahlt“, ist der Monat gesperrt; Änderungen gelten dann frühestens ab dem Folgemonat
-  (die Oberfläche zeigt den frühesten Monat an und füllt die Formulare damit vor).
-- **Abo beenden** (normaler Weg bei einer Kündigung): Alle Beteiligungen enden nach dem gewählten Monat, das Abo wird
-  archiviert („Beendete Abos anzeigen“) und lässt sich wieder aktivieren. Die Vergangenheit bleibt unverändert.
-- **Abo löschen** entfernt es endgültig und geht nur, solange es in keiner abgelaufenen oder bezahlt gemeldeten
-  Abrechnung vorkommt; sonst bitte beenden.
+- **Rückstand:** Hat jemand einen Monat nicht bezahlt, wird der offene Betrag im nächsten Monat aufgeschlagen. Die
+  Zahlungsseite zeigt den Gesamtbetrag (mit Aufschlüsselung der Vormonate) und die Referenz-ID der neuesten Zahlung;
+  der Verwendungszweck enthält „inkl. Rückstand“. „Ich habe bezahlt“ gilt für alles Offene bei diesem Empfänger, und
+  „Bestätigen“ der neuesten Zahlung bestätigt auch die früheren gemeldeten Monate. Die App legt die Zahlungen für alle
+  Monate seit der ersten Beteiligung an, auch wenn in einem Monat niemand die App geöffnet hat.
+- **Austragen (durch den Mitzahler, bei jedem Abo):** Vor dem Fälligkeitstag des laufenden Monats und solange für ihn
+  noch nichts bezahlt gemeldet ist, gilt es **ab dem laufenden Monat** (der Monat entfällt). Nach dem Fälligkeitstag
+  oder bei schon gemeldeter Zahlung gilt es **ab dem Folgemonat**. Offene Rückstände bleiben bestehen.
+- **Änderungen durch den Empfänger** (Preis, Gewicht, Beteiligung) gelten ab einem Monat; vergangene Monate bleiben
+  unverändert. Im laufenden Monat ist alles änderbar, **solange noch keine Zahlung bei diesem Empfänger als „bezahlt“
+  gemeldet oder bestätigt ist**. Offene Zahlungen werden dann automatisch neu berechnet (Referenz-ID bleibt). Danach
+  gilt eine Änderung frühestens ab dem Folgemonat; die Oberfläche zeigt den frühesten Monat an.
+- **Abo beenden** (normaler Weg bei Kündigung): Beteiligungen enden nach dem gewählten Monat, das Abo wird archiviert
+  und lässt sich wieder aktivieren. **Abo löschen** geht nur, solange es in keiner abgelaufenen oder bezahlt gemeldeten
+  Abrechnung vorkommt.
 
-## Konfiguration (nur Umgebungsvariablen)
+## Konfiguration (nur Systemwerte in der `.env`)
+
+Benutzer, Empfängerdaten und Fälligkeitstag liegen **nicht** in der `.env`, sondern pro Konto in der App.
 
 | Variable | Pflicht | Beschreibung |
 |---|---|---|
-| `BASE_URL` | ja | Öffentliche URL, Basis der Magic-Links (z. B. `https://abos.example.org`). Cookies sind `Secure`, wenn sie mit `https` beginnt. |
+| `BASE_URL` | ja | Öffentliche URL, Basis der Einrichtungslinks (z. B. `https://abos.example.org`). Cookies sind `Secure`, wenn sie mit `https` beginnt. |
+| `SESSION_SECRET` | ja | Mindestens 32 Zeichen, signiert die Sitzungen. |
+| `DB_ENCRYPTION_KEY` | ja | Mindestens 32 Zeichen, verschlüsselt die gesamte Datenbankdatei. **Getrennt sichern; Verlust = Datenverlust.** Muss sich von `SESSION_SECRET` unterscheiden. |
 | `APP_NAME` | nein | Name im Verwendungszweck `<ID> <App-Name> <JJJJ-MM>` (Standard `SubSplit`). |
-| `ADMIN_USERNAME` | nein | Admin-Benutzername (Standard `admin`). |
-| `ADMIN_PASSWORD_HASH` | ja | Hash aus `scripts/hash-password.mjs` (scrypt). |
-| `SESSION_SECRET` | ja | Mindestens 32 Zeichen, signiert die Admin-Session. |
-| `ADMIN_IDLE_TIMEOUT_MINUTES` | nein | Der Admin wird nach so vielen Minuten ohne Aktion abgemeldet (1–1440, Standard 30). Jede Admin-Anfrage setzt den Timer auf den vollen Wert zurück (gleitende Sitzung); es gibt keine absolute Obergrenze. |
-| `RECIPIENT_NAME` | ja | Empfängername (GiroCode, max. 70 Zeichen). |
-| `RECIPIENT_PAYPAL_ME` | ja | Nur der Name nach `paypal.me/` (Buchstaben und Ziffern, max. 20 Zeichen). |
-| `RECIPIENT_IBAN` | ja | Wird beim Start auf gültige Prüfsumme geprüft. |
-| `PAYPAL_LINK_BASE`, `PAYPAL_APPEND_CURRENCY`, `PAYPAL_DECIMAL` | nein | Linkformat von PayPal, siehe „Bekannte Unsicherheiten“. |
-| `DUE_DAY` | nein | Fälligkeitstag im Monat, 1–28 (Standard 1). |
+| `ADMIN_IDLE_TIMEOUT_MINUTES` | nein | Abmeldung nach so vielen Minuten ohne Aktion (1–1440, Standard 30). Jede Aktion setzt den Timer auf den vollen Wert zurück; es gibt keine absolute Obergrenze. |
 | `TRUSTED_PROXY_CIDR` | empfohlen | Adressbereich(e) des Proxy-Netzwerks, kommagetrennt. Nur von dort wird `X-Forwarded-For` übernommen. |
 | `SECURITY_LOG_FILE` | nein | Standard `/logs/security.log`. |
 | `DATABASE_PATH` | nein | Standard `/data/subsplit.db` (im Volume). |
 | `PROXY_NETWORK` | nein | Name des externen Docker-Netzwerks (Standard `proxy`), nur für `docker-compose.yml`. |
+| `UNUSUAL_MONTHLY_TOTAL_EUR`, `UNUSUAL_FACTOR` | nein | Warnung beim Betreiber, wenn die Monatssumme eines Empfängers den festen Wert (Standard 500 €) erreicht oder das X-Fache (Standard 3) des Durchschnitts der letzten 3 Monate übersteigt. |
+| `PAYPAL_LINK_BASE`, `PAYPAL_APPEND_CURRENCY`, `PAYPAL_DECIMAL` | nein | Linkformat von PayPal, siehe „Bekannte Unsicherheiten“. |
 | `SMTP_*` | – | Erst in Phase 2. |
 
 Zeitzone des Containers: `Europe/Berlin`.
@@ -120,33 +142,32 @@ abos.example.org {
 Das HTTPS-Zertifikat übernimmt Caddy.
 
 - **Client-IP:** Caddy verwirft eingehende `X-Forwarded-*`-Header standardmäßig (solange du `trusted_proxies` nicht
-  setzt) und trägt die IP der Verbindung ein. Setze **kein** `trusted_proxies` in Caddy, außer vor Caddy hängt
-  noch ein weiterer Proxy.
-- **Magic-Link im Access-Log:** Der Token steht im URL-Pfad (`/p/<token>`) und landet in Caddys Access-Log,
-  falls du eines aktivierst. Du kannst ihn schwärzen, z. B. mit einem Log-Filter auf `request>uri` mit
-  `regexp "^/p/[A-Za-z0-9_-]+" "/p/REDACTED"`. **Diese Syntax ist nicht gegen die Caddy-Doku geprüft** –
-  teste sie, bevor du dich darauf verlässt. Die App selbst setzt `Referrer-Policy: no-referrer`, damit der Link
-  nicht als Referer weitergegeben wird.
+  setzt) und trägt die IP der Verbindung ein. Setze **kein** `trusted_proxies` in Caddy, außer vor Caddy hängt noch ein
+  weiterer Proxy. (Aus Suchergebnissen und dem Caddy-Quellcode belegt, nicht aus der offiziellen Doku.)
+- **Einrichtungslinks im Access-Log:** Der Token steht im URL-Pfad (`/setup/<token>`) und landet in Caddys Access-Log,
+  falls du eines aktivierst. Du kannst ihn z. B. mit einem Log-Filter auf `request>uri` schwärzen
+  (`regexp "^/setup/[A-Za-z0-9_-]+" "/setup/REDACTED"`). **Diese Syntax ist nicht gegen die Caddy-Doku geprüft.** Die
+  Links sind einmalig und befristet; die App setzt `Referrer-Policy: no-referrer`.
 
 ## Sicherheits-Log und fail2ban
 
-Bei jedem fehlgeschlagenen Zugriff mit unbekanntem Token und bei jedem fehlgeschlagenen Admin-Login schreibt die App
-genau eine Zeile in `SECURITY_LOG_FILE` (und zusätzlich nach stdout):
+Bei jedem fehlgeschlagenen Anmeldeversuch und bei jedem ungültigen Einrichtungslink schreibt die App genau eine Zeile in
+`SECURITY_LOG_FILE` (und zusätzlich nach stdout):
 
 ```
-2026-11-04T13:43:12+01:00 SUBSPLIT_AUTHFAIL ip=203.0.113.5 reason=invalid_token
-2026-11-04T13:43:13+01:00 SUBSPLIT_AUTHFAIL ip=203.0.113.5 reason=admin_login
+2026-11-04T13:43:12+01:00 SUBSPLIT_AUTHFAIL ip=203.0.113.5 reason=admin_login
+2026-11-04T13:43:13+01:00 SUBSPLIT_AUTHFAIL ip=203.0.113.5 reason=invalid_token
 ```
 
-- Ein **gesperrter (widerrufener) Link** zählt nicht als Fehlversuch: Er erzeugt nur
-  `SUBSPLIT_NOTICE … reason=revoked_token`, damit ein Teilnehmer mit altem Link nicht gebannt wird. Für den Client
-  sehen unbekannte und gesperrte Links identisch aus (gleiche 404-Antwort).
+- `admin_login` = falscher Benutzername/Passwort (auch bei gesperrten Konten), `invalid_token` = unbekannter oder
+  bereits verbrauchter Einrichtungslink.
+- Ein **abgelaufener** Einrichtungslink zählt nicht als Fehlversuch: `SUBSPLIT_NOTICE … reason=revoked_token`.
 - Token, Passwörter und andere Geheimnisse stehen nie im Log. Ist keine gültige Client-IP bestimmbar, steht
   `ip=unknown` (kein Ban möglich, dafür nie eine falsche Adresse).
 - Die Datei liegt per Bind-Mount unter `./logs/security.log` auf dem Host.
 
-**Dein bestehender fail2ban-Container** muss die Datei lesen können: Binde `./logs` dort (z. B. schreibgeschützt)
-ein und verweise im Jail auf den Pfad **im fail2ban-Container**. Eine eigene fail2ban-Installation ist nicht nötig.
+**Dein bestehender fail2ban-Container** muss die Datei lesen können: Binde `./logs` dort (z. B. schreibgeschützt) ein
+und verweise im Jail auf den Pfad **im fail2ban-Container**. Eine eigene fail2ban-Installation ist nicht nötig.
 
 Beispiel-Filter `filter.d/subsplit.conf`:
 
@@ -168,114 +189,116 @@ findtime = 10m
 bantime  = 1d
 ```
 
-Hinweis zu `<ADDR>` statt `<HOST>`: `<HOST>` würde auch Hostnamen akzeptieren, also auch `ip=unknown` als DNS-Namen
-behandeln. `<ADDR>` matcht nur IPv4/IPv6. Läuft Caddy in Docker, muss die Ban-Aktion deines fail2ban die Kette
-`DOCKER-USER` verwenden (Ports 80/443), sonst greift der Ban nicht, und das Firewall-Backend (iptables oder nftables)
-muss zum System passen. Das ist Teil deiner bestehenden fail2ban-Konfiguration und hier nicht getestet.
+`<ADDR>` statt `<HOST>`: `<HOST>` würde auch Hostnamen akzeptieren, also `ip=unknown` als DNS-Namen behandeln. Läuft Caddy
+in Docker, muss die Ban-Aktion deines fail2ban die Kette `DOCKER-USER` verwenden (Ports 80/443), sonst greift der Ban
+nicht, und das Firewall-Backend (iptables oder nftables) muss zum System passen. Das ist Teil deiner bestehenden
+fail2ban-Konfiguration und hier nicht getestet.
 
-**Filter gegen die echte Logdatei testen** (auf dem Host, mit installiertem `fail2ban-regex`, oder im fail2ban-Container):
+**Filter gegen die echte Logdatei testen:**
 
 ```bash
 fail2ban-regex ./logs/security.log /etc/fail2ban/filter.d/subsplit.conf
 ```
 
-Erwartet: Treffer nur für `SUBSPLIT_AUTHFAIL` mit gültiger IP. `ip=unknown`, `SUBSPLIT_NOTICE` und unbekannte
+Erwartet: Treffer nur für `SUBSPLIT_AUTHFAIL` mit gültiger IP; `ip=unknown`, `SUBSPLIT_NOTICE` und unbekannte
 `reason`-Werte werden nicht gematcht. (Der Filter wurde mit `fail2ban-regex` 1.0.2 gegen eine von der App erzeugte
 Logdatei und Beispielzeilen mit IPv4/IPv6 geprüft.)
 
-**Rotation und Aufbewahrung:** Die App rotiert die Datei selbst nach Größe (5 MB, drei Generationen:
-`security.log`, `.1`, `.2`, `.3`). Das Log enthält IP-Adressen und dient nur der Sicherheit. Vorschlag: höchstens
-30 Tage aufbewahren. Bei wenig Verkehr deckt die Größenrotation das nicht zeitlich ab, deshalb zusätzlich per Cron
-auf dem Host:
+**Rotation und Aufbewahrung:** Die App rotiert die Datei selbst nach Größe (5 MB, drei Generationen). Das Log enthält
+IP-Adressen und dient nur der Sicherheit; Vorschlag: höchstens 30 Tage aufbewahren, z. B. per Cron auf dem Host:
 
 ```bash
 find ./logs -name 'security.log.*' -mtime +30 -delete
 ```
 
-## Backup und Wiederherstellung
+## Backup, Wiederherstellung und Schlüssel
 
-Die Datenbank liegt im Docker-Volume `subsplit-data` (`/data/subsplit.db`), **nie im Image**.
+Die Datenbank liegt im Docker-Volume `subsplit-data` (`/data/subsplit.db`), **nie im Image**, und ist **als ganze Datei
+verschlüsselt** (inklusive der WAL-Datei). Ohne `DB_ENCRYPTION_KEY` ist weder die Datei noch ein Backup lesbar.
 
-**Konsistentes Backup bei laufender App** (nicht einfach die `.db`-Datei kopieren, SQLite läuft im WAL-Modus):
+**Konsistentes Backup bei laufender App** (nicht einfach die `.db`-Datei kopieren, SQLite läuft im WAL-Modus). Das
+Backup bleibt mit demselben Schlüssel verschlüsselt:
 
 ```bash
 docker compose exec subsplit node scripts/backup.mjs /data/backups/subsplit-$(date +%F).db
 docker compose cp subsplit:/data/backups/subsplit-$(date +%F).db ./backups/
 ```
 
-Sichere diese Datei außerhalb des Servers. Wiederherstellen: Container stoppen, Backup als `/data/subsplit.db`
-ins Volume legen (die Dateien `subsplit.db-wal` und `-shm` löschen), Container starten.
-Alternativ kannst du das gesamte Volume bei gestoppter App sichern.
+Wiederherstellen: Container stoppen, Backup als `/data/subsplit.db` ins Volume legen (die Dateien `subsplit.db-wal`
+und `-shm` löschen), mit **demselben** `DB_ENCRYPTION_KEY` starten.
 
-Magic-Links sind nur als Hash gespeichert und lassen sich nach einem Verlust nicht wiederherstellen; dann pro
-Teilnehmer „Neuer Link“ erzeugen.
+**Den Schlüssel sicherst du getrennt** (Passwortmanager). Wer Backup und Schlüssel zusammen aufbewahrt, hebt den
+Schutz der Verschlüsselung auf; ohne Schlüssel ist ein Backup wertlos.
 
 ## Datenschutz
 
-- **Mitzahler sehen sich gegenseitig** mit Anzeigenamen, Gewichten, Anteilen und Beträgen **innerhalb der
-  gemeinsamen Abos**. Wähle Anzeigenamen entsprechend (Vorname oder Spitzname). Teilnehmer erfahren das auf ihrer Seite.
-- Die App speichert **E-Mail-Adressen** (optional, nur für den Admin sichtbar; für Phase 2 vorgesehen) und
-  im **Sicherheits-Log IP-Adressen** (nur für Sicherheitszwecke, nicht ewig aufbewahren, siehe oben).
-- Sonst keine personenbezogenen Daten in Logs. Keine Tracker, keine externen Schriften oder Skripte.
+- **Mitzahler sehen sich gegenseitig** mit Anzeigenamen, Gewichten, Anteilen und Beträgen **innerhalb der gemeinsamen
+  Abos**. Wähle Anzeigenamen entsprechend (Vorname oder Spitzname). Das steht auch auf der Zahlungsseite.
+- **Empfänger sehen** in der Kontenliste beim Eintragen von Mitzahlern die Anzeigenamen und Benutzernamen aller aktiven
+  Konten (das System beruht auf Vertrauen unter Freunden). Mitzahler sehen die Zahlungsdaten (IBAN, PayPal.Me,
+  Empfängername) des Empfängers, bei dem sie zahlen.
+- **Betreiber:** Die Oberfläche zeigt dem Betreiber nur Konto-Stammdaten, Status, eine Größenklasse der Monatssumme und
+  eine Warnung. **Technisch** hat der Betreiber mit Serverzugriff und `DB_ENCRYPTION_KEY` aber Zugriff auf alle Daten.
+- **Verschlüsselung:** Die gesamte Datenbankdatei ist verschlüsselt, also auch Namen, IBAN, PayPal.Me-Name, E-Mail,
+  Benutzernamen und alle Zahlungen. Sie schützt vor dem **Diebstahl der Datenbankdatei oder eines Backups**, nicht vor
+  jemandem, der den laufenden Server samt Schlüssel in der `.env` übernimmt. **Passwörter werden nicht verschlüsselt,
+  sondern mit scrypt gehasht** (nicht zurückrechenbar).
+- Gespeichert werden außerdem E-Mail-Adressen (optional) und im **Sicherheits-Log IP-Adressen** (nur für
+  Sicherheitszwecke, nicht ewig aufbewahren, siehe oben). Sonst keine personenbezogenen Daten in Logs. Keine Tracker,
+  keine externen Schriften oder Skripte.
+- Sobald du die App für andere betreibst, bist du Verantwortlicher für deren Daten. Das ist keine Rechtsberatung.
 
 ## Bekannte Unsicherheiten
 
 Bitte vor dem Livebetrieb prüfen:
 
-1. **PayPal-Link:** Belegt (PayPal-Hilfe): Der Name darf nur Buchstaben/Ziffern enthalten (max. 20 Zeichen), und
-   der Betrag steht am Linkende mit dem Währungscode direkt dahinter (Beispiel der Hilfe: `PayPal.Me/DiaRusso/25AUD`).
-   **Nicht belegt** sind der Dezimaltrenner (Punkt), `EUR` im Link und die Domain-Variante `paypal.com/paypalme`
-   statt `paypal.me`. **Mache einen Test mit einem Kleinstbetrag** (z. B. 0,01 € an dich selbst), bevor du Links
-   verschickst. Die Notiz lässt sich über den Link nicht vorausfüllen, deshalb steht die Referenz-ID mit
-   Kopieren-Button daneben.
-
-   *Öffnet der Link auf dem Handy die PayPal-App mit Betrag?* Das ist **nicht offiziell dokumentiert**; es ist ein
-   normaler https-Link, und ob die App ihn mit Betrag öffnet, entscheidet PayPal. Ein PayPal-Schema (`paypal://…`)
-   zum Vorausfüllen ist mir nicht bekannt. **Praxistest des Betreibers:** Mit angehängtem Währungscode (`…/12.34EUR`)
-   öffnete die App nur das Profil des Empfängers, **ohne** Währungscode (`…/12.34`) wurde der Betrag übernommen.
-   Der Standard ist deshalb **ohne** Währungscode, mit Basis `paypal.me` und Komma als Dezimaltrenner (`https://paypal.me/Name/12,34`); so hat es beim Betreiber funktioniert. Ohne Code gilt die Standardwährung von PayPal, prüfe beim Test, dass
-   in der App Euro angezeigt wird. Die Notiz bzw. Referenz-ID lässt sich nicht vorausfüllen. Falls PayPal sein Verhalten
-   ändert, lassen sich die Varianten per `.env` umstellen (danach nur `docker compose up -d`, kein neuer Build):
+1. **PayPal-Link:** Belegt (PayPal-Hilfe): Der Name darf nur Buchstaben/Ziffern enthalten (max. 20 Zeichen), und der Betrag
+   steht am Linkende, optional mit Währungscode dahinter (Beispiel der Hilfe: `PayPal.Me/DiaRusso/25AUD`). **Praxistest
+   des Betreibers:** Mit angehängtem Währungscode (`…/12.34EUR`) öffnete die App nur das Profil, **ohne** Währungscode
+   wurde der Betrag übernommen. Der Standard ist deshalb `https://paypal.me/Name/12,34` (Basis `paypal.me`, Komma, ohne
+   Währung). Ohne Code gilt PayPals Standardwährung; prüfe in der App, dass Euro angezeigt wird. Ob die App sich öffnet
+   und den Betrag übernimmt, entscheidet PayPal; ein `paypal://`-Schema zum Vorausfüllen ist mir nicht bekannt. Die
+   Notiz bzw. Referenz-ID lässt sich nicht vorausfüllen. Varianten per `.env` (danach nur `docker compose up -d`):
 
    | Variable | Werte | Standard |
    |---|---|---|
-   | `PAYPAL_APPEND_CURRENCY` | `true` / `false` (Betrag mit oder ohne `EUR`) | `false` |
-   | `PAYPAL_LINK_BASE` | `https://paypal.me` oder `https://www.paypal.com/paypalme` (nur diese Hosts erlaubt) | `https://paypal.me` |
+   | `PAYPAL_APPEND_CURRENCY` | `true` / `false` | `false` |
+   | `PAYPAL_LINK_BASE` | `https://paypal.me` oder `https://www.paypal.com/paypalme` | `https://paypal.me` |
    | `PAYPAL_DECIMAL` | `dot` / `comma` | `comma` |
 
    Die Link-Erzeugung liegt an einer Stelle ([`src/lib/pay/paypal.ts`](src/lib/pay/paypal.ts)).
-
-2. **GiroCode (EPC069-12):** Das Original-PDF war bei der Entwicklung nicht abrufbar. Das Payload-Layout
-   (BCD, Version 002, UTF-8, SCT, BIC leer, Name, IBAN, `EURx.xx`, Verwendungszweck ≤ 140 Zeichen, Fehlerkorrektur M)
-   folgt der Spezifikation nach bestem Wissen und Sekundärquellen. **Prüfe die BIC-Regel von Version 002 gegen die
-   Spezifikation und scanne einen Test-GiroCode mit deiner Banking-App.**
-3. **Banking-App per Link öffnen** gibt es nach meinem Kenntnisstand nicht (EPC definiert nur ein QR-Textformat).
-   Mobil gibt es deshalb den PayPal-Button und aufklappbare, kopierbare Bankdaten.
-4. **Docker-Image:** Bei der Entwicklung stand kein Docker-Daemon zur Verfügung. Geprüft wurden das
-   Compose-File (`docker compose config`) und das Laufzeit-Layout des Images (Start, Migration, `/healthz`,
-   Security-Header). Der erste `docker compose build` auf deinem Server ist der eigentliche Test.
-5. **Client-IP hinter Docker:** Der Ban greift nur, wenn Caddy die echte Client-IP sieht. Bei IPv6 oder NAT durch
-   Docker (Userland-Proxy) kann stattdessen eine interne Adresse ankommen. Prüfe nach dem Start mit einem absichtlich
-   falschen Link, welche IP im Sicherheits-Log steht.
-6. **Content-Security-Policy** erlaubt vorläufig `unsafe-inline` für Skripte/Styles (Next.js-Hydration); Umstellung
-   auf Nonces ist offen.
-7. **Rate-Limit** liegt im Arbeitsspeicher (eine Instanz) und wird beim Neustart zurückgesetzt. Die App ist durch
-   SQLite für **genau eine Instanz** ausgelegt.
-8. Das Anmelden verbraucht bewusst Rechenzeit/Speicher (scrypt, ca. 64 MB je Versuch); begrenzt durch das Rate-Limit.
+2. **GiroCode (EPC069-12):** Das Original-PDF war bei der Entwicklung nicht abrufbar. Das Payload-Layout (BCD, Version
+   002, UTF-8, SCT, BIC leer, Name, IBAN, `EURx.xx`, Verwendungszweck ≤ 140 Zeichen, Fehlerkorrektur M) folgt der
+   Spezifikation nach bestem Wissen und Sekundärquellen. **Prüfe die BIC-Regel von Version 002 gegen die Spezifikation
+   und scanne einen Test-GiroCode mit deiner Banking-App.** Ein Link, der eine Banking-App mit vorausgefülltem GiroCode
+   öffnet, ist mir nicht bekannt; mobil gibt es deshalb aufklappbare, kopierbare Bankdaten statt QR-Codes.
+3. **Docker-Image:** Bei der Entwicklung stand kein Docker-Daemon zur Verfügung. Geprüft wurden das Compose-File
+   (`docker compose config`) und das Laufzeit-Layout (Start, Migration, Verschlüsselung, `/healthz`, Security-Header,
+   mehrere Konten im Browser-Test). Die verschlüsselte SQLite-Variante bringt fertige Binärdateien für Linux x64 und
+   arm64 (glibc und musl) mit. Der erste `docker compose build` auf deinem Server ist der eigentliche Test.
+4. **Client-IP hinter Docker:** Der Ban greift nur, wenn Caddy die echte Client-IP sieht. Bei IPv6 oder NAT durch Docker
+   (Userland-Proxy) kann stattdessen eine interne Adresse ankommen. Prüfe nach dem Start mit falschen Anmeldedaten, welche
+   IP im Sicherheits-Log steht.
+5. **Content-Security-Policy** erlaubt vorläufig `unsafe-inline` für Skripte/Styles (Next.js-Hydration); Umstellung auf
+   Nonces ist offen.
+6. **Rate-Limit** liegt im Arbeitsspeicher (eine Instanz) und wird beim Neustart zurückgesetzt. Die App ist durch SQLite
+   für **genau eine Instanz** ausgelegt. Das Anmelden verbraucht bewusst Rechenzeit/Speicher (scrypt, ca. 64 MB je Versuch).
+7. **Verschlüsselung:** Verlust von `DB_ENCRYPTION_KEY` ist nicht behebbar. Ein Schlüsselwechsel ist nicht vorgesehen.
 
 ## Entwicklung
 
 ```bash
 npm install
-npm test            # Vitest: Berechnung, Zahlungslinks, Sicherheit, Sichtbarkeit
+npm test            # Vitest: Berechnung, Zahlungslinks, Sicherheit, Konten, Mandantentrennung, Verschlüsselung
 npm run typecheck
 npm run dev         # benötigt die Umgebungsvariablen aus .env.example
 ```
 
 Wichtige Stellen: Berechnung `src/lib/billing`, Zahlungslinks `src/lib/pay`, Sicherheit `src/lib/security`,
-serverseitige Sichtbarkeit `src/lib/services/participant-view.ts`.
+Konten und Login `src/lib/services/users.ts`, Verwaltung pro Empfänger `src/lib/services/manage.ts`, Zahlungen und
+Rückstand `src/lib/services/payments.ts`, Sichten mit serverseitiger Sichtbarkeit `src/lib/services/views.ts`.
 
 ## Phase 2 (noch nicht umgesetzt)
 
-E-Mail-Erinnerungen per SMTP (Tabelle `reminder_log`, Feld „Erinnerungen erhalten“ und E-Mail-Feld sind im
-Datenmodell vorbereitet) kommen erst nach deiner Freigabe.
+E-Mail-Erinnerungen per SMTP (Tabelle `reminder_log`, Feld „Erinnerungen erhalten“ und E-Mail-Feld sind im Datenmodell
+vorbereitet) kommen erst nach deiner Freigabe.

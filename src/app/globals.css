@@ -176,3 +176,28 @@ table.t td { padding: 10px 16px 10px 0; border-bottom: 1px solid var(--line); ve
 
 .chip--none { color: var(--muted); }
 .listbtn[aria-pressed="true"] { background: var(--panel-2); box-shadow: inset 4px 0 0 var(--accent); }
+
+/* Navigation für angemeldete Seiten */
+.navbar { border-bottom: 2px solid var(--line-strong); }
+.navbar__inner { max-width: 1040px; margin: 0 auto; padding: 0 16px; display: flex; overflow-x: auto; }
+.navbar a { font: 600 12px/1 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); text-decoration: none; padding: 14px 16px; white-space: nowrap; }
+.navbar a:hover { color: var(--text); }
+.navbar a[aria-current="page"] { color: var(--text); box-shadow: inset 0 -4px 0 var(--accent); }
+@media (max-width: 520px) { .navbar a { padding: 14px 10px; letter-spacing: 0.06em; font-size: 11px; } .navbar__inner { padding: 0 6px; } }
+.brand small { margin-left: 10px; }
+
+/* Karten, Kennzahlen */
+.paycard { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center; padding: 16px; background: var(--panel); border: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.paycard:hover { border-color: var(--line-strong); }
+.paycard .name { font-weight: 700; font-size: 18px; }
+.paycard .amt { font-family: var(--font-mono); font-size: 22px; font-weight: 500; text-align: right; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); margin-bottom: 20px; }
+.stats > div { padding: 12px 14px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.stats .v { font-family: var(--font-mono); font-size: 20px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.chip--warn { color: var(--warn); }
+@media (max-width: 520px) {
+  .topbar { padding: 10px 12px; gap: 8px; }
+  .brand { font-size: 15px; letter-spacing: 0.08em; }
+  .brand small { display: none; }
+  .topbar .seg button { padding: 8px 9px; }
+}
