@@ -28,3 +28,15 @@ export function currentMonth(now: Date = new Date(), timeZone = "Europe/Berlin")
   const m = parts.find((p) => p.type === "month")!.value;
   return `${y}-${m}`;
 }
+
+/** Heutiges Datum "YYYY-MM-DD" in der angegebenen Zeitzone (Standard: Europe/Berlin). */
+export function berlinDate(now: Date = new Date(), timeZone = "Europe/Berlin"): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)!.value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** Fälligkeitsdatum "YYYY-MM-DD" eines Monats (Tag 1-28). */
+export function dueDateOf(month: Month, dueDay: number): string {
+  return `${assertMonth(month)}-${String(dueDay).padStart(2, "0")}`;
+}

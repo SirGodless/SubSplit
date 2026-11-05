@@ -114,9 +114,11 @@ describe("Passwort", () => {
 
 describe("Session / CSRF / Rate-Limit", () => {
   const secret = "s".repeat(40);
+  const U = { uid: 7, sv: 2 };
   it("Session gültig, manipuliert, abgelaufen, anderes Secret", () => {
-    const { value, payload } = createSession(secret, 1_000_000);
+    const { value, payload } = createSession(secret, U, 1_000_000);
     expect(verifySession(value, secret, 1_000_000)?.csrf).toBe(payload.csrf);
+    expect(verifySession(value, secret, 1_000_000)).toMatchObject({ uid: 7, sv: 2 });
     expect(verifySession(value + "x", secret, 1_000_000)).toBeNull();
     expect(verifySession(value, "anderes-secret-anderes-secret-xx", 1_000_000)).toBeNull();
     expect(verifySession(value, secret, 1_000_000 + 31 * 60 * 1000)).toBeNull(); // nach 30 min ohne Aktion abgelaufen
@@ -126,7 +128,7 @@ describe("Session / CSRF / Rate-Limit", () => {
   });
   it("Inaktivitäts-Timeout: Standard 30 Minuten, Verlängerung bei Aktivität, gleiches CSRF-Token", () => {
     const t0 = 1_000_000;
-    const { value, payload } = createSession(secret, t0);
+    const { value, payload } = createSession(secret, U, t0);
     expect(verifySession(value, secret, t0 + 29 * 60 * 1000)).not.toBeNull();
     // Aktivität nach 20 min verlängert um weitere 30 min -> nach 45 min noch gültig
     const refreshed = refreshSession(payload, secret, t0 + 20 * 60 * 1000);
@@ -134,7 +136,7 @@ describe("Session / CSRF / Rate-Limit", () => {
     expect(again?.csrf).toBe(payload.csrf);
     expect(verifySession(refreshed, secret, t0 + 51 * 60 * 1000)).toBeNull(); // 31 min nach der letzten Aktivität
     // einstellbar
-    expect(verifySession(createSession(secret, t0, 60).value, secret, t0 + 61 * 1000)).toBeNull();
+    expect(verifySession(createSession(secret, U, t0, 60).value, secret, t0 + 61 * 1000)).toBeNull();
   });
   it("Cookie: Max-Age entspricht dem Timeout, HttpOnly/SameSite, Secure nur bei https", () => {
     expect(sessionCookie("x", true)).toMatch(/Max-Age=1800.*Secure|Secure.*Max-Age=1800|Max-Age=1800/);

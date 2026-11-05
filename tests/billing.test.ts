@@ -105,18 +105,18 @@ describe("Preishistorie", () => {
       id: 1, name: "S", prices,
       memberships: [{ participantId: 1, weight: 1, validFromMonth: "2025-01", validToMonth: null }],
     };
-    const ps = [{ id: 1, displayName: "A", isOwner: false }];
-    expect(computeMonth("2026-02", [sub], ps).totals[0]!.totalCents).toBe(1299);
-    expect(computeMonth("2026-03", [sub], ps).totals[0]!.totalCents).toBe(1599);
+    const ps = [{ id: 1, displayName: "A" }];
+    expect(computeMonth("2026-02", [sub], ps, 99).totals[0]!.totalCents).toBe(1299);
+    expect(computeMonth("2026-03", [sub], ps, 99).totals[0]!.totalCents).toBe(1599);
   });
 });
 
 describe("computeMonth", () => {
   const participants = [
-    { id: 1, displayName: "Ich", isOwner: true },
-    { id: 2, displayName: "Anna", isOwner: false },
-    { id: 3, displayName: "Bob", isOwner: false },
-    { id: 4, displayName: "Cleo", isOwner: false },
+    { id: 1, displayName: "Ich" },
+    { id: 2, displayName: "Anna" },
+    { id: 3, displayName: "Bob" },
+    { id: 4, displayName: "Cleo" },
   ];
   const m = (participantId: number, weight = 1, from = "2026-01", to: string | null = null) => ({
     participantId, weight, validFromMonth: from, validToMonth: to,
@@ -128,7 +128,7 @@ describe("computeMonth", () => {
   ];
 
   it("Monatssumme = Summe der gerundeten Anteile über mehrere Abos", () => {
-    const r = computeMonth("2026-05", subs, participants);
+    const r = computeMonth("2026-05", subs, participants, 1);
     const nf = r.subscriptions.find((s) => s.subscriptionId === 10)!;
     expect(nf.lines.map((l) => l.amountCents)).toEqual([667, 666, 666]); // 1999 / 3 abgerundet, Rest 1 -> Admin (ID 1)
     expect(nf.restCents).toBe(0);
@@ -146,7 +146,7 @@ describe("computeMonth", () => {
   });
 
   it("Owner-Anteil wird berechnet, aber nicht als Zahlung geführt", () => {
-    const r = computeMonth("2026-05", subs, participants);
+    const r = computeMonth("2026-05", subs, participants, 1);
     const owner = r.totals.find((t) => t.participantId === 1)!;
     expect(owner.totalCents).toBe(667);
     expect(owner.payable).toBe(false);
@@ -158,7 +158,7 @@ describe("computeMonth", () => {
       id: 1, name: "X", prices: [{ validFromMonth: "2026-01", amountCents: 1000 }],
       memberships: [m(2, 1, "2026-01"), m(3, 1, "2026-06", "2026-08")],
     }];
-    const lines = (month: string) => computeMonth(month, s, participants).subscriptions[0]!.lines.map((l) => l.participantId);
+    const lines = (month: string) => computeMonth(month, s, participants, 1).subscriptions[0]!.lines.map((l) => l.participantId);
     expect(lines("2026-05")).toEqual([2]);
     expect(lines("2026-06")).toEqual([2, 3]);
     expect(lines("2026-08")).toEqual([2, 3]);
@@ -166,20 +166,20 @@ describe("computeMonth", () => {
   });
 
   it("Prozentwerte sind Anzeige und stammen aus den Gewichten", () => {
-    const r = computeMonth("2026-05", subs, participants);
+    const r = computeMonth("2026-05", subs, participants, 1);
     const sp = r.subscriptions.find((s) => s.subscriptionId === 20)!;
     expect(sp.lines.map((l) => l.percent)).toEqual([66.67, 33.33]);
   });
 
   it("Abos ohne gültigen Preis oder ohne Beteiligte tauchen nicht auf; Teilnehmer ohne Abo nicht in totals", () => {
-    const r = computeMonth("2025-12", subs, participants);
+    const r = computeMonth("2025-12", subs, participants, 1);
     expect(r.subscriptions).toEqual([]);
     expect(r.totals).toEqual([]);
   });
 
   it("Zahlung 0 ist nicht payable", () => {
     const s: SubscriptionInput[] = [{ id: 1, name: "Gratis", prices: [{ validFromMonth: "2026-01", amountCents: 0 }], memberships: [m(2)] }];
-    expect(computeMonth("2026-05", s, participants).totals[0]!.payable).toBe(false);
+    expect(computeMonth("2026-05", s, participants, 1).totals[0]!.payable).toBe(false);
   });
 });
 

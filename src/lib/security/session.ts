@@ -6,6 +6,10 @@ export const SESSION_COOKIE = "subsplit_admin";
 export const DEFAULT_IDLE_SECONDS = 30 * 60;
 
 export interface SessionPayload {
+  /** Konto-ID. */
+  uid: number;
+  /** Sitzungsversion des Kontos; Passwortwechsel/Sperre erhöht sie und beendet alle Sitzungen. */
+  sv: number;
   exp: number; // Unix-Sekunden, Ablauf bei Inaktivität
   csrf: string;
 }
@@ -19,14 +23,14 @@ function encode(payload: SessionPayload, secret: string): string {
   return `${body}.${sign(body, secret)}`;
 }
 
-export function createSession(secret: string, now = Date.now(), idleSeconds = DEFAULT_IDLE_SECONDS): { value: string; payload: SessionPayload } {
-  const payload: SessionPayload = { exp: Math.floor(now / 1000) + idleSeconds, csrf: randomBytes(24).toString("base64url") };
+export function createSession(secret: string, user: { uid: number; sv: number }, now = Date.now(), idleSeconds = DEFAULT_IDLE_SECONDS): { value: string; payload: SessionPayload } {
+  const payload: SessionPayload = { uid: user.uid, sv: user.sv, exp: Math.floor(now / 1000) + idleSeconds, csrf: randomBytes(24).toString("base64url") };
   return { value: encode(payload, secret), payload };
 }
 
 /** Gleitende Sitzung: gleiches CSRF-Token, Ablauf neu auf jetzt + Inaktivitäts-Timeout. */
 export function refreshSession(payload: SessionPayload, secret: string, now = Date.now(), idleSeconds = DEFAULT_IDLE_SECONDS): string {
-  return encode({ exp: Math.floor(now / 1000) + idleSeconds, csrf: payload.csrf }, secret);
+  return encode({ uid: payload.uid, sv: payload.sv, exp: Math.floor(now / 1000) + idleSeconds, csrf: payload.csrf }, secret);
 }
 
 export function verifySession(value: string | undefined, secret: string, now = Date.now()): SessionPayload | null {
@@ -35,7 +39,7 @@ export function verifySession(value: string | undefined, secret: string, now = D
   if (!body || !sig || rest.length > 0 || !safeEqual(sig, sign(body, secret))) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as SessionPayload;
-    if (typeof payload.exp !== "number" || typeof payload.csrf !== "string") return null;
+    if (typeof payload.exp !== "number" || typeof payload.csrf !== "string" || !Number.isInteger(payload.uid) || !Number.isInteger(payload.sv)) return null;
     return payload.exp * 1000 > now ? payload : null;
   } catch {
     return null;

@@ -6,6 +6,7 @@ export interface PriceInput {
   amountCents: number;
 }
 export interface MembershipInput {
+  /** Konto-ID des Mitzahlers. */
   participantId: number;
   weight: number;
   validFromMonth: Month;
@@ -20,7 +21,6 @@ export interface SubscriptionInput {
 export interface ParticipantInput {
   id: number;
   displayName: string;
-  isOwner: boolean;
 }
 
 export interface ShareLine {
@@ -35,7 +35,7 @@ export interface SubscriptionBreakdown {
   name: string;
   priceCents: number;
   lines: ShareLine[];
-  /** Rundungsrest, der beim Admin verbleibt, wenn er selbst nicht im Abo ist (Summe lines + restCents = priceCents). */
+  /** Rundungsrest, der beim Empfänger verbleibt, wenn er selbst nicht im Abo ist (Summe lines + restCents = priceCents). */
   restCents: number;
 }
 export interface ParticipantTotal {
@@ -43,13 +43,17 @@ export interface ParticipantTotal {
   isOwner: boolean;
   /** Summe der bereits gerundeten Anteile. */
   totalCents: number;
-  /** Nur Nicht-Owner mit Betrag > 0 schulden eine Monatszahlung. */
+  /** Nur Beteiligte außer dem Empfänger mit Betrag > 0 schulden eine Monatszahlung. */
   payable: boolean;
 }
 export interface MonthResult {
   month: Month;
   subscriptions: SubscriptionBreakdown[];
   totals: ParticipantTotal[];
+  /** Gesamtkosten aller Abos des Monats (Summe der Abo-Preise, nur Abos mit Beteiligten). */
+  totalCostCents: number;
+  /** Summe der Rundungsreste, die beim Empfänger bleiben. */
+  restCents: number;
 }
 
 /** Gültiger Preis eines Monats: Eintrag mit größtem validFromMonth <= month; null, wenn keiner. */
@@ -65,15 +69,21 @@ export function activeMemberships(memberships: MembershipInput[], month: Month):
   return memberships.filter((m) => m.validFromMonth <= month && (m.validToMonth === null || month <= m.validToMonth));
 }
 
+/**
+ * Berechnet einen Monat für die Abos EINES Empfängers (ownerId). Der Empfänger bekommt den Rundungsrest
+ * und schuldet sich selbst nichts. Es gilt: totalCostCents == Summe(totals) + restCents.
+ */
 export function computeMonth(
   month: Month,
   subscriptions: SubscriptionInput[],
   participants: ParticipantInput[],
+  ownerId: number | null,
 ): MonthResult {
   assertMonth(month);
-  const ownerId = participants.find((p) => p.isOwner)?.id ?? null;
   const breakdowns: SubscriptionBreakdown[] = [];
   const totals = new Map<number, number>();
+  let totalCostCents = 0;
+  let restTotal = 0;
 
   for (const sub of [...subscriptions].sort((a, b) => a.id - b.id)) {
     const price = priceForMonth(sub.prices, month);
@@ -90,14 +100,16 @@ export function computeMonth(
     }));
     for (const l of lines) totals.set(l.participantId, (totals.get(l.participantId) ?? 0) + l.amountCents);
     breakdowns.push({ subscriptionId: sub.id, name: sub.name, priceCents: price, lines, restCents });
+    totalCostCents += price;
+    restTotal += restCents;
   }
 
-  const byId = new Map(participants.map((p) => [p.id, p]));
+  const known = new Set(participants.map((p) => p.id));
   const result: ParticipantTotal[] = [];
   for (const [participantId, totalCents] of [...totals].sort((a, b) => a[0] - b[0])) {
-    const p = byId.get(participantId);
-    if (!p) throw new Error(`Teilnehmer ${participantId} unbekannt`);
-    result.push({ participantId, isOwner: p.isOwner, totalCents, payable: !p.isOwner && totalCents > 0 });
+    if (!known.has(participantId)) throw new Error(`Konto ${participantId} unbekannt`);
+    const isOwner = participantId === ownerId;
+    result.push({ participantId, isOwner, totalCents, payable: !isOwner && totalCents > 0 });
   }
-  return { month, subscriptions: breakdowns, totals: result };
+  return { month, subscriptions: breakdowns, totals: result, totalCostCents, restCents: restTotal };
 }
