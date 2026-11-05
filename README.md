@@ -201,7 +201,7 @@ internen Netz `mailnet` erreichbar (kein veröffentlichter Port). Er verschickt 
    ```bash
    docker compose --profile mail up -d --build
    ```
-   Beim ersten Start erzeugt der Container einen DKIM-Schlüssel in `./dkim/` (`anfall.net.txt` enthält den DNS-Wert).
+   Beim ersten Start erzeugt der Container (mit `DKIM_BACKEND=opendkim`; das Image nutzt sonst rspamd und legt die Schlüssel woanders ab, das Backend gilt laut Image-Doku als veraltet) einen DKIM-Schlüssel in `./dkim/` (`anfall.net.txt` enthält den DNS-Wert).
    Den Ordner `dkim` sichern; ohne ihn gibt es einen neuen Schlüssel und der DNS-Eintrag muss erneuert werden.
 3. **DNS bei Hetzner** (Domain `anfall.net`, `<IP>` = öffentliche IPv4 des Servers):
 
