@@ -92,6 +92,7 @@ Regeln für Änderungen: Preis, Gewicht und Beteiligung gelten **ab einem Monat*
 | `ADMIN_USERNAME` | nein | Admin-Benutzername (Standard `admin`). |
 | `ADMIN_PASSWORD_HASH` | ja | Hash aus `scripts/hash-password.mjs` (scrypt). |
 | `SESSION_SECRET` | ja | Mindestens 32 Zeichen, signiert die Admin-Session. |
+| `ADMIN_IDLE_TIMEOUT_MINUTES` | nein | Der Admin wird nach so vielen Minuten ohne Aktion abgemeldet (1–1440, Standard 30). Jede Admin-Anfrage setzt den Timer auf den vollen Wert zurück (gleitende Sitzung); es gibt keine absolute Obergrenze. |
 | `RECIPIENT_NAME` | ja | Empfängername (GiroCode, max. 70 Zeichen). |
 | `RECIPIENT_PAYPAL_ME` | ja | Nur der Name nach `paypal.me/` (Buchstaben und Ziffern, max. 20 Zeichen). |
 | `RECIPIENT_IBAN` | ja | Wird beim Start auf gültige Prüfsumme geprüft. |
@@ -232,15 +233,15 @@ Bitte vor dem Livebetrieb prüfen:
    normaler https-Link, und ob die App ihn mit Betrag öffnet, entscheidet PayPal. Ein PayPal-Schema (`paypal://…`)
    zum Vorausfüllen ist mir nicht bekannt. **Praxistest des Betreibers:** Mit angehängtem Währungscode (`…/12.34EUR`)
    öffnete die App nur das Profil des Empfängers, **ohne** Währungscode (`…/12.34`) wurde der Betrag übernommen.
-   Der Standard ist deshalb **ohne** Währungscode. Ohne Code gilt die Standardwährung von PayPal, prüfe beim Test, dass
+   Der Standard ist deshalb **ohne** Währungscode, mit Basis `paypal.me` und Komma als Dezimaltrenner (`https://paypal.me/Name/12,34`); so hat es beim Betreiber funktioniert. Ohne Code gilt die Standardwährung von PayPal, prüfe beim Test, dass
    in der App Euro angezeigt wird. Die Notiz bzw. Referenz-ID lässt sich nicht vorausfüllen. Falls PayPal sein Verhalten
    ändert, lassen sich die Varianten per `.env` umstellen (danach nur `docker compose up -d`, kein neuer Build):
 
    | Variable | Werte | Standard |
    |---|---|---|
    | `PAYPAL_APPEND_CURRENCY` | `true` / `false` (Betrag mit oder ohne `EUR`) | `false` |
-   | `PAYPAL_LINK_BASE` | `https://www.paypal.com/paypalme` oder `https://paypal.me` (nur diese Hosts erlaubt) | `https://www.paypal.com/paypalme` |
-   | `PAYPAL_DECIMAL` | `dot` / `comma` | `dot` |
+   | `PAYPAL_LINK_BASE` | `https://paypal.me` oder `https://www.paypal.com/paypalme` (nur diese Hosts erlaubt) | `https://paypal.me` |
+   | `PAYPAL_DECIMAL` | `dot` / `comma` | `comma` |
 
    Die Link-Erzeugung liegt an einer Stelle ([`src/lib/pay/paypal.ts`](src/lib/pay/paypal.ts)).
 

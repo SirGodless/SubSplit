@@ -35,16 +35,16 @@ describe("EPC / GiroCode", () => {
 
 describe("PayPal-Link (eine Stelle, konfigurierbar)", () => {
   it("Standardformat", () => {
-    expect(buildPaypalLink("MaxMuster", 1234)).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34");
-    expect(formatPaypalAmount(5)).toBe("0.05");
+    expect(buildPaypalLink("MaxMuster", 1234)).toBe("https://paypal.me/MaxMuster/12,34");
+    expect(formatPaypalAmount(5)).toBe("0,05");
   });
   it("Währungscode lässt sich per Konfiguration wieder anhängen", () => {
     const f = { baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: "." as const, appendCurrency: true, currency: "EUR" };
     expect(buildPaypalLink("MaxMuster", 1234, f)).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34EUR");
   });
   it("Varianten über Konfiguration", () => {
-    const f = { baseUrl: "https://paypal.me/", decimalSeparator: "," as const, appendCurrency: false, currency: "EUR" };
-    expect(buildPaypalLink("MaxMuster", 1050, f)).toBe("https://paypal.me/MaxMuster/10,50");
+    const f = { baseUrl: "https://www.paypal.com/paypalme/", decimalSeparator: "." as const, appendCurrency: false, currency: "EUR" };
+    expect(buildPaypalLink("MaxMuster", 1050, f)).toBe("https://www.paypal.com/paypalme/MaxMuster/10.50");
   });
   it("lehnt ungültige Namen und Beträge ab (keine Parameter-Injektion)", () => {
     expect(() => buildPaypalLink("max/../x", 100)).toThrow();
@@ -60,7 +60,7 @@ describe("Zahlungslinks", () => {
       { name: "Max Mustermann", paypalMe: "MaxMuster", iban: "DE89370400440532013000", appName: "SubSplit" },
       { referenceId: "K7M2QX", month: "2026-11", amountCents: 1234 },
     );
-    expect(l.paypalUrl).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34");
+    expect(l.paypalUrl).toBe("https://paypal.me/MaxMuster/12,34");
     expect(l.paypalQrSvg).toMatch(/^<svg/);
     expect(l.giroCodeSvg).toMatch(/^<svg/);
     expect(l.remittance).toBe("K7M2QX SubSplit 2026-11");
@@ -68,9 +68,9 @@ describe("Zahlungslinks", () => {
   it("das konfigurierte PayPal-Format landet im gebauten Link", async () => {
     const l = await buildPaymentLinks(
       { name: "Max Mustermann", paypalMe: "MaxMuster", iban: "DE89370400440532013000", appName: "SubSplit",
-        paypalFormat: { baseUrl: "https://paypal.me", decimalSeparator: ".", appendCurrency: false, currency: "EUR" } },
+        paypalFormat: { baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: ".", appendCurrency: false, currency: "EUR" } },
       { referenceId: "K7M2QX", month: "2026-11", amountCents: 1234 },
     );
-    expect(l.paypalUrl).toBe("https://paypal.me/MaxMuster/12.34");
+    expect(l.paypalUrl).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34");
   });
 });

@@ -27,8 +27,8 @@ export async function POST(req: Request) {
       c.logger.authFail(ip, "admin_login");
       return json({ error: "invalid_credentials" }, 401);
     }
-    const { value, payload } = createSession(c.config.sessionSecret);
-    return json({ csrfToken: payload.csrf }, 200, { "Set-Cookie": sessionCookie(value, c.config.baseUrl.startsWith("https:")) });
+    const { value, payload } = createSession(c.config.sessionSecret, Date.now(), c.config.adminIdleSeconds);
+    return json({ csrfToken: payload.csrf }, 200, { "Set-Cookie": sessionCookie(value, c.config.baseUrl.startsWith("https:"), c.config.adminIdleSeconds) });
   } catch (err) {
     return errorResponse(err);
   }

@@ -66,3 +66,8 @@
 
 ## PayPal-Link ohne Währungscode (Praxistest)
 - Auf einem echten Handy mit PayPal-App öffnete der Link mit `EUR` am Betrag nur das Profil des Empfängers; ohne Währungscode wurde der Betrag übernommen. Standard daher `PAYPAL_APPEND_CURRENCY=false`. Risiko: Ohne Code gilt PayPals Standardwährung; bei Zahlern mit einem Konto in anderer Währung ist nicht geprüft, welche Währung angezeigt wird. In der App kontrollieren, dass Euro dasteht.
+- Praxistest ergänzt: Funktionierendes Format beim Betreiber ist `https://paypal.me/<Name>/<Betrag mit Komma>` ohne Währungscode. Das ist jetzt der Standard.
+
+## Admin-Sitzung: Inaktivitäts-Timeout
+- Vorher fest 8 Stunden ab Login. Jetzt gleitend: Jede gültige Admin-Anfrage setzt den Ablauf auf `jetzt + Timeout` (nicht `alter Ablauf + Timeout`), Standard 30 Minuten, per `ADMIN_IDLE_TIMEOUT_MINUTES` einstellbar (1-1440). Das Cookie wird bei jeder Admin-Anfrage neu gesetzt (`Max-Age` = Timeout, gleiches CSRF-Token); der Logout setzt es nicht neu.
+- Keine absolute Maximaldauer: Wer regelmäßig aktiv ist, bleibt angemeldet.

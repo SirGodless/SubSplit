@@ -8,7 +8,7 @@ import { csrfTokenValid, isSameOrigin } from "@/lib/security/csrf";
 import { hashPassword, verifyPassword } from "@/lib/security/password";
 import { RateLimiter } from "@/lib/security/rate-limit";
 import { createSecurityLogger, formatTimestamp } from "@/lib/security/security-log";
-import { createSession, verifySession } from "@/lib/security/session";
+import { createSession, refreshSession, sessionCookie, verifySession } from "@/lib/security/session";
 import { generateToken, hashToken, isWellFormedToken } from "@/lib/security/tokens";
 
 describe("Client-IP", () => {
@@ -119,10 +119,30 @@ describe("Session / CSRF / Rate-Limit", () => {
     expect(verifySession(value, secret, 1_000_000)?.csrf).toBe(payload.csrf);
     expect(verifySession(value + "x", secret, 1_000_000)).toBeNull();
     expect(verifySession(value, "anderes-secret-anderes-secret-xx", 1_000_000)).toBeNull();
-    expect(verifySession(value, secret, 1_000_000 + 9 * 3600 * 1000)).toBeNull();
+    expect(verifySession(value, secret, 1_000_000 + 31 * 60 * 1000)).toBeNull(); // nach 30 min ohne Aktion abgelaufen
     expect(verifySession(undefined, secret)).toBeNull();
     const [body] = value.split(".");
     expect(verifySession(`${body}.`, secret)).toBeNull();
+  });
+  it("Inaktivitäts-Timeout: Standard 30 Minuten, Verlängerung bei Aktivität, gleiches CSRF-Token", () => {
+    const t0 = 1_000_000;
+    const { value, payload } = createSession(secret, t0);
+    expect(verifySession(value, secret, t0 + 29 * 60 * 1000)).not.toBeNull();
+    // Aktivität nach 20 min verlängert um weitere 30 min -> nach 45 min noch gültig
+    const refreshed = refreshSession(payload, secret, t0 + 20 * 60 * 1000);
+    const again = verifySession(refreshed, secret, t0 + 45 * 60 * 1000);
+    expect(again?.csrf).toBe(payload.csrf);
+    expect(verifySession(refreshed, secret, t0 + 51 * 60 * 1000)).toBeNull(); // 31 min nach der letzten Aktivität
+    // einstellbar
+    expect(verifySession(createSession(secret, t0, 60).value, secret, t0 + 61 * 1000)).toBeNull();
+  });
+  it("Cookie: Max-Age entspricht dem Timeout, HttpOnly/SameSite, Secure nur bei https", () => {
+    expect(sessionCookie("x", true)).toMatch(/Max-Age=1800.*Secure|Secure.*Max-Age=1800|Max-Age=1800/);
+    expect(sessionCookie("x", true)).toContain("Secure");
+    expect(sessionCookie("x", false)).not.toContain("Secure");
+    expect(sessionCookie("x", false, 600)).toContain("Max-Age=600");
+    expect(sessionCookie("x", false)).toContain("HttpOnly");
+    expect(sessionCookie("x", false)).toContain("SameSite=Strict");
   });
   it("CSRF: Origin und Token", () => {
     expect(isSameOrigin("https://abos.example.org", "https://abos.example.org")).toBe(true);

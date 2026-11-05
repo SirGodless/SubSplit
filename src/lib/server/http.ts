@@ -1,6 +1,6 @@
 import { ZodError } from "zod";
 import { csrfTokenValid, isSameOrigin } from "@/lib/security/csrf";
-import { SESSION_COOKIE, verifySession, type SessionPayload } from "@/lib/security/session";
+import { refreshSession, SESSION_COOKIE, sessionCookie, verifySession, type SessionPayload } from "@/lib/security/session";
 import { AdminError } from "@/lib/services/admin";
 import { ctx } from "./context";
 
@@ -58,7 +58,12 @@ export function adminRoute<P = Record<string, never>>(handler: (a: AdminCtx<P>) 
         if (!csrfTokenValid(req.headers.get("x-csrf-token"), session.csrf)) return json({ error: "forbidden" }, 403);
       }
       const out = await handler({ req, params: await routeCtx.params, session, readBody: () => readJson(req) });
-      return out instanceof Response ? out : json(out);
+      const res = out instanceof Response ? out : json(out);
+      // Gleitende Sitzung: jede gültige Admin-Anfrage verlängert um den Inaktivitäts-Timeout (außer der Handler setzt selbst ein Cookie, z. B. Logout).
+      if (res.headers.has("set-cookie")) return res;
+      const headers = new Headers(res.headers);
+      headers.append("Set-Cookie", sessionCookie(refreshSession(session, c.config.sessionSecret, Date.now(), c.config.adminIdleSeconds), c.config.baseUrl.startsWith("https:"), c.config.adminIdleSeconds));
+      return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
     } catch (err) {
       return errorResponse(err);
     }

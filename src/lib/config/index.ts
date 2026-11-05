@@ -7,6 +7,8 @@ export interface Config {
   baseUrl: string;
   adminUsername: string;
   adminPasswordHash: string;
+  /** Inaktivitäts-Timeout der Admin-Sitzung in Sekunden. */
+  adminIdleSeconds: number;
   sessionSecret: string;
   recipientName: string;
   recipientPaypalMe: string;
@@ -67,6 +69,13 @@ export function loadConfig(env: Env = process.env): Config {
 
   const adminUsername = get("ADMIN_USERNAME") || "admin";
   const adminPasswordHash = required("ADMIN_PASSWORD_HASH");
+  let adminIdleSeconds = 30 * 60;
+  const idleRaw = get("ADMIN_IDLE_TIMEOUT_MINUTES");
+  if (idleRaw) {
+    const m = Number(idleRaw);
+    if (!/^\d{1,4}$/.test(idleRaw) || m < 1 || m > 1440) problems.push("ADMIN_IDLE_TIMEOUT_MINUTES muss eine ganze Zahl von 1 bis 1440 (Minuten) sein.");
+    else adminIdleSeconds = m * 60;
+  }
   const sessionSecret = required("SESSION_SECRET", "mindestens 32 Zeichen");
   if (sessionSecret && sessionSecret.length < 32) problems.push("SESSION_SECRET ist kürzer als 32 Zeichen.");
 
@@ -95,7 +104,8 @@ export function loadConfig(env: Env = process.env): Config {
   }
   const decRaw = get("PAYPAL_DECIMAL").toLowerCase();
   if (decRaw === "comma") paypalFormat.decimalSeparator = ",";
-  else if (decRaw && decRaw !== "dot") problems.push('PAYPAL_DECIMAL muss "dot" oder "comma" sein.');
+  else if (decRaw === "dot") paypalFormat.decimalSeparator = ".";
+  else if (decRaw) problems.push('PAYPAL_DECIMAL muss "dot" oder "comma" sein.');
   const curRaw = get("PAYPAL_APPEND_CURRENCY").toLowerCase();
   if (curRaw === "true") paypalFormat.appendCurrency = true;
   else if (curRaw === "false") paypalFormat.appendCurrency = false;
@@ -126,6 +136,7 @@ export function loadConfig(env: Env = process.env): Config {
     baseUrl,
     adminUsername,
     adminPasswordHash,
+    adminIdleSeconds,
     sessionSecret,
     recipientName,
     recipientPaypalMe,

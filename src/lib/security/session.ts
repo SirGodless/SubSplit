@@ -2,10 +2,11 @@ import { createHmac, randomBytes } from "node:crypto";
 import { safeEqual } from "./tokens";
 
 export const SESSION_COOKIE = "subsplit_admin";
-export const SESSION_TTL_SECONDS = 8 * 60 * 60;
+/** Inaktivitäts-Timeout: Jede gültige Admin-Anfrage verlängert die Sitzung um diese Zeit. */
+export const DEFAULT_IDLE_SECONDS = 30 * 60;
 
 export interface SessionPayload {
-  exp: number; // Unix-Sekunden
+  exp: number; // Unix-Sekunden, Ablauf bei Inaktivität
   csrf: string;
 }
 
@@ -13,10 +14,19 @@ function sign(data: string, secret: string): string {
   return createHmac("sha256", secret).update(data).digest("base64url");
 }
 
-export function createSession(secret: string, now = Date.now()): { value: string; payload: SessionPayload } {
-  const payload: SessionPayload = { exp: Math.floor(now / 1000) + SESSION_TTL_SECONDS, csrf: randomBytes(24).toString("base64url") };
+function encode(payload: SessionPayload, secret: string): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return { value: `${body}.${sign(body, secret)}`, payload };
+  return `${body}.${sign(body, secret)}`;
+}
+
+export function createSession(secret: string, now = Date.now(), idleSeconds = DEFAULT_IDLE_SECONDS): { value: string; payload: SessionPayload } {
+  const payload: SessionPayload = { exp: Math.floor(now / 1000) + idleSeconds, csrf: randomBytes(24).toString("base64url") };
+  return { value: encode(payload, secret), payload };
+}
+
+/** Gleitende Sitzung: gleiches CSRF-Token, Ablauf neu auf jetzt + Inaktivitäts-Timeout. */
+export function refreshSession(payload: SessionPayload, secret: string, now = Date.now(), idleSeconds = DEFAULT_IDLE_SECONDS): string {
+  return encode({ exp: Math.floor(now / 1000) + idleSeconds, csrf: payload.csrf }, secret);
 }
 
 export function verifySession(value: string | undefined, secret: string, now = Date.now()): SessionPayload | null {
@@ -32,8 +42,8 @@ export function verifySession(value: string | undefined, secret: string, now = D
   }
 }
 
-export function sessionCookie(value: string, secure: boolean): string {
-  return [`${SESSION_COOKIE}=${value}`, "Path=/", "HttpOnly", "SameSite=Strict", `Max-Age=${SESSION_TTL_SECONDS}`, ...(secure ? ["Secure"] : [])].join("; ");
+export function sessionCookie(value: string, secure: boolean, maxAgeSeconds = DEFAULT_IDLE_SECONDS): string {
+  return [`${SESSION_COOKIE}=${value}`, "Path=/", "HttpOnly", "SameSite=Strict", `Max-Age=${maxAgeSeconds}`, ...(secure ? ["Secure"] : [])].join("; ");
 }
 
 export function clearSessionCookie(secure: boolean): string {

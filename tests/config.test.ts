@@ -78,9 +78,9 @@ describe("loadConfig", () => {
 
 describe("PayPal-Linkformat per Umgebung", () => {
   it("Standard und Varianten", () => {
-    expect(loadConfig(valid).paypalFormat).toEqual({ baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: ".", appendCurrency: false, currency: "EUR" });
-    const c = loadConfig({ ...valid, PAYPAL_LINK_BASE: "https://paypal.me/", PAYPAL_APPEND_CURRENCY: "true", PAYPAL_DECIMAL: "comma" });
-    expect(c.paypalFormat).toEqual({ baseUrl: "https://paypal.me", decimalSeparator: ",", appendCurrency: true, currency: "EUR" });
+    expect(loadConfig(valid).paypalFormat).toEqual({ baseUrl: "https://paypal.me", decimalSeparator: ",", appendCurrency: false, currency: "EUR" });
+    const c = loadConfig({ ...valid, PAYPAL_LINK_BASE: "https://www.paypal.com/paypalme/", PAYPAL_APPEND_CURRENCY: "true", PAYPAL_DECIMAL: "dot" });
+    expect(c.paypalFormat).toEqual({ baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: ".", appendCurrency: true, currency: "EUR" });
   });
   it("lehnt fremde Hosts, http, Parameter und unbekannte Werte ab", () => {
     for (const bad of ["https://evil.example/paypalme", "http://paypal.com/paypalme", "https://paypal.com.evil.example/x", "https://paypal.me/?a=1", "paypal.me"]) {
@@ -88,5 +88,13 @@ describe("PayPal-Linkformat per Umgebung", () => {
     }
     expect(problems({ ...valid, PAYPAL_DECIMAL: "x" }).join()).toMatch(/PAYPAL_DECIMAL/);
     expect(problems({ ...valid, PAYPAL_APPEND_CURRENCY: "vielleicht" }).join()).toMatch(/PAYPAL_APPEND_CURRENCY/);
+  });
+});
+
+describe("Admin-Inaktivitäts-Timeout", () => {
+  it("Standard 30 Minuten, per Umgebung einstellbar, ungültige Werte werden abgelehnt", () => {
+    expect(loadConfig(valid).adminIdleSeconds).toBe(30 * 60);
+    expect(loadConfig({ ...valid, ADMIN_IDLE_TIMEOUT_MINUTES: "60" }).adminIdleSeconds).toBe(3600);
+    for (const bad of ["0", "-5", "abc", "1.5", "1441"]) expect(problems({ ...valid, ADMIN_IDLE_TIMEOUT_MINUTES: bad }).join(), bad).toMatch(/ADMIN_IDLE_TIMEOUT_MINUTES/);
   });
 });
