@@ -61,4 +61,12 @@ describe("Zahlungslinks", () => {
     expect(l.giroCodeSvg).toMatch(/^<svg/);
     expect(l.remittance).toBe("K7M2QX SubSplit 2026-11");
   });
+  it("das konfigurierte PayPal-Format landet im gebauten Link", async () => {
+    const l = await buildPaymentLinks(
+      { name: "Max Mustermann", paypalMe: "MaxMuster", iban: "DE89370400440532013000", appName: "SubSplit",
+        paypalFormat: { baseUrl: "https://paypal.me", decimalSeparator: ".", appendCurrency: false, currency: "EUR" } },
+      { referenceId: "K7M2QX", month: "2026-11", amountCents: 1234 },
+    );
+    expect(l.paypalUrl).toBe("https://paypal.me/MaxMuster/12.34");
+  });
 });

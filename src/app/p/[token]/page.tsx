@@ -34,7 +34,7 @@ export default async function ParticipantPage({ params, searchParams }: { params
   const links =
     pay && pay.status !== "confirmed"
       ? await buildPaymentLinks(
-          { name: c.config.recipientName, paypalMe: c.config.recipientPaypalMe, iban: c.config.recipientIban, appName: c.config.appName },
+          { name: c.config.recipientName, paypalMe: c.config.recipientPaypalMe, iban: c.config.recipientIban, appName: c.config.appName, paypalFormat: c.config.paypalFormat },
           { referenceId: pay.referenceId, month: view.month, amountCents: pay.amountCents },
         )
       : null;

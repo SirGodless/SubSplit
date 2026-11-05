@@ -75,3 +75,18 @@ describe("loadConfig", () => {
     expect(isValidCidr("10.0.0.0")).toBe(false);
   });
 });
+
+describe("PayPal-Linkformat per Umgebung", () => {
+  it("Standard und Varianten", () => {
+    expect(loadConfig(valid).paypalFormat).toEqual({ baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: ".", appendCurrency: true, currency: "EUR" });
+    const c = loadConfig({ ...valid, PAYPAL_LINK_BASE: "https://paypal.me/", PAYPAL_APPEND_CURRENCY: "false", PAYPAL_DECIMAL: "comma" });
+    expect(c.paypalFormat).toEqual({ baseUrl: "https://paypal.me", decimalSeparator: ",", appendCurrency: false, currency: "EUR" });
+  });
+  it("lehnt fremde Hosts, http, Parameter und unbekannte Werte ab", () => {
+    for (const bad of ["https://evil.example/paypalme", "http://paypal.com/paypalme", "https://paypal.com.evil.example/x", "https://paypal.me/?a=1", "paypal.me"]) {
+      expect(problems({ ...valid, PAYPAL_LINK_BASE: bad }).join(), bad).toMatch(/PAYPAL_LINK_BASE/);
+    }
+    expect(problems({ ...valid, PAYPAL_DECIMAL: "x" }).join()).toMatch(/PAYPAL_DECIMAL/);
+    expect(problems({ ...valid, PAYPAL_APPEND_CURRENCY: "vielleicht" }).join()).toMatch(/PAYPAL_APPEND_CURRENCY/);
+  });
+});

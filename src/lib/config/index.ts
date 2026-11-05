@@ -1,4 +1,5 @@
 import { BlockList, isIP } from "node:net";
+import { DEFAULT_PAYPAL_FORMAT, type PaypalLinkFormat } from "@/lib/pay/paypal";
 import { isValidIban, normalizeIban } from "./iban";
 
 export interface Config {
@@ -10,6 +11,7 @@ export interface Config {
   recipientName: string;
   recipientPaypalMe: string;
   recipientIban: string;
+  paypalFormat: PaypalLinkFormat;
   dueDay: number;
   securityLogFile: string;
   trustedProxyCidrs: string[];
@@ -79,6 +81,25 @@ export function loadConfig(env: Env = process.env): Config {
   const ibanRaw = required("RECIPIENT_IBAN");
   if (ibanRaw && !isValidIban(ibanRaw)) problems.push("RECIPIENT_IBAN hat eine ungültige Prüfsumme oder ein ungültiges Format.");
 
+  // PayPal-Linkformat (nur Host-Allowlist, damit ein Tippfehler keine Zahlungen an fremde Seiten lenkt)
+  const paypalFormat: PaypalLinkFormat = { ...DEFAULT_PAYPAL_FORMAT };
+  const baseRaw = get("PAYPAL_LINK_BASE");
+  if (baseRaw) {
+    try {
+      const u = new URL(baseRaw);
+      if (u.protocol !== "https:" || !["www.paypal.com", "paypal.com", "www.paypal.me", "paypal.me"].includes(u.hostname) || u.search || u.hash) throw new Error();
+      paypalFormat.baseUrl = baseRaw.replace(/\/+$/, "");
+    } catch {
+      problems.push("PAYPAL_LINK_BASE muss eine https-URL auf paypal.com oder paypal.me ohne Parameter sein (z. B. https://www.paypal.com/paypalme).");
+    }
+  }
+  const decRaw = get("PAYPAL_DECIMAL").toLowerCase();
+  if (decRaw === "comma") paypalFormat.decimalSeparator = ",";
+  else if (decRaw && decRaw !== "dot") problems.push('PAYPAL_DECIMAL muss "dot" oder "comma" sein.');
+  const curRaw = get("PAYPAL_APPEND_CURRENCY").toLowerCase();
+  if (curRaw === "false") paypalFormat.appendCurrency = false;
+  else if (curRaw && curRaw !== "true") problems.push('PAYPAL_APPEND_CURRENCY muss "true" oder "false" sein.');
+
   let dueDay = 1;
   const dueRaw = get("DUE_DAY");
   if (dueRaw) {
@@ -108,6 +129,7 @@ export function loadConfig(env: Env = process.env): Config {
     recipientName,
     recipientPaypalMe,
     recipientIban: normalizeIban(ibanRaw),
+    paypalFormat,
     dueDay,
     securityLogFile: get("SECURITY_LOG_FILE") || "/logs/security.log",
     trustedProxyCidrs,

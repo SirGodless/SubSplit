@@ -1,12 +1,13 @@
 import QRCode from "qrcode";
 import { buildEpcPayload } from "./epc";
-import { buildPaypalLink } from "./paypal";
+import { buildPaypalLink, type PaypalLinkFormat } from "./paypal";
 
 export interface RecipientInfo {
   name: string;
   paypalMe: string;
   iban: string;
   appName: string;
+  paypalFormat?: PaypalLinkFormat;
 }
 
 export interface PaymentLinks {
@@ -27,7 +28,7 @@ const qrSvg = (text: string) => QRCode.toString(text, { type: "svg", errorCorrec
 /** Genau ein Link-Satz pro Monatszahlung (Gesamtbetrag). Nie pro Abo. */
 export async function buildPaymentLinks(r: RecipientInfo, p: { referenceId: string; month: string; amountCents: number }): Promise<PaymentLinks> {
   const remittance = buildRemittance(p.referenceId, r.appName, p.month);
-  const paypalUrl = buildPaypalLink(r.paypalMe, p.amountCents);
+  const paypalUrl = buildPaypalLink(r.paypalMe, p.amountCents, r.paypalFormat);
   const epc = buildEpcPayload({ name: r.name, iban: r.iban, amountCents: p.amountCents, remittance });
   const [paypalQrSvg, giroCodeSvg] = await Promise.all([qrSvg(paypalUrl), qrSvg(epc)]);
   return { referenceId: p.referenceId, remittance, paypalUrl, paypalQrSvg, giroCodeSvg, recipientName: r.name, iban: r.iban };

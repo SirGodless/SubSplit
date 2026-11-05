@@ -23,7 +23,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
     const links =
       view.payment && view.payment.status !== "confirmed"
         ? await buildPaymentLinks(
-            { name: c.config.recipientName, paypalMe: c.config.recipientPaypalMe, iban: c.config.recipientIban, appName: c.config.appName },
+            { name: c.config.recipientName, paypalMe: c.config.recipientPaypalMe, iban: c.config.recipientIban, appName: c.config.appName, paypalFormat: c.config.paypalFormat },
             { referenceId: view.payment.referenceId, month: view.month, amountCents: view.payment.amountCents },
           )
         : null;
