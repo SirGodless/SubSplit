@@ -25,7 +25,7 @@ export function normalizeUsername(raw: string): string {
   return v;
 }
 
-function cleanDisplayName(raw: string): string {
+export function cleanDisplayName(raw: string): string {
   const v = raw.trim();
   if (!v || v.length > 60) throw new AppError("invalid", "Anzeigename muss 1-60 Zeichen lang sein.");
   return v;
@@ -56,6 +56,14 @@ export function createUser(db: Db, input: { username: string; displayName: strin
     if (err instanceof Error && /UNIQUE constraint failed: users\.username/.test(err.message)) throw new AppError("invalid", "Dieser Benutzername ist schon vergeben.");
     throw err;
   }
+}
+
+/** Legt ein Konto mit eigenem Passwort an (Einlösen eines Einladungslinks). */
+export function createUserWithPassword(db: Db, input: { username: string; displayName: string; password: string }): number {
+  validatePassword(input.password);
+  const id = createUser(db, { username: input.username, displayName: input.displayName });
+  db.update(users).set({ passwordHash: hashPassword(input.password, COST) }).where(eq(users.id, id)).run();
+  return id;
 }
 
 /** Erzeugt einen einmaligen Einrichtungslink (Erst-Einrichtung oder Passwort-Reset). Ein alter Link wird ungültig. */

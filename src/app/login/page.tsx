@@ -17,7 +17,7 @@ export default async function LoginPage() {
       <main className="shell" style={{ paddingTop: 32, maxWidth: 420 }}>
         <h1 className="h" style={{ marginBottom: 18 }}>Anmelden</h1>
         <LoginForm />
-        <p className="muted" style={{ fontSize: 14, marginTop: 24 }}>Noch kein Konto? Die Zugangsdaten bekommst du als Einladungslink vom Betreiber.</p>
+        <p className="muted" style={{ fontSize: 14, marginTop: 24 }}>Noch kein Konto? Du brauchst einen Einladungslink von jemandem, der schon dabei ist.</p>
       </main>
     </>
   );

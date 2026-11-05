@@ -1,6 +1,13 @@
 import { BlockList, isIP } from "node:net";
 import { DEFAULT_PAYPAL_FORMAT, type PaypalLinkFormat } from "@/lib/pay/paypal";
 
+/** Wer Einladungslinks erstellen darf und wie viele jedes Konto gleichzeitig offen haben darf. */
+export interface InviteSettings {
+  creators: "all" | "operator";
+  /** 0 = Einladungen ganz abgeschaltet. */
+  maxActive: number;
+}
+
 export interface Config {
   appName: string;
   baseUrl: string;
@@ -17,6 +24,7 @@ export interface Config {
   /** Warnschwelle für die Monatssumme eines Empfängers (Cent) und Faktor gegenüber dem 3-Monats-Durchschnitt. */
   unusualMonthlyTotalCents: number;
   unusualFactor: number;
+  invite: InviteSettings;
 }
 
 export class ConfigError extends Error {
@@ -114,6 +122,16 @@ export function loadConfig(env: Env = process.env): Config {
     else unusualFactor = Number(facRaw);
   }
 
+  const invite: InviteSettings = { creators: "all", maxActive: 5 };
+  const credRaw = get("INVITATIONS_CREATORS").toLowerCase();
+  if (credRaw === "all" || credRaw === "operator") invite.creators = credRaw;
+  else if (credRaw) problems.push('INVITATIONS_CREATORS muss "all" oder "operator" sein.');
+  const maxRaw = get("INVITATIONS_MAX_ACTIVE");
+  if (maxRaw) {
+    if (!/^\d{1,3}$/.test(maxRaw) || Number(maxRaw) > 100) problems.push("INVITATIONS_MAX_ACTIVE muss eine ganze Zahl von 0 bis 100 sein (0 = Einladungen abgeschaltet).");
+    else invite.maxActive = Number(maxRaw);
+  }
+
   const trustedProxyCidrs = get("TRUSTED_PROXY_CIDR")
     .split(",")
     .map((s) => s.trim())
@@ -137,6 +155,7 @@ export function loadConfig(env: Env = process.env): Config {
     migrationsDir: get("MIGRATIONS_DIR") || "./drizzle",
     unusualMonthlyTotalCents,
     unusualFactor,
+    invite,
   };
 }
 

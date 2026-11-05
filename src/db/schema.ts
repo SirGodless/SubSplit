@@ -38,6 +38,21 @@ export const users = sqliteTable("users", {
   lastLoginAt: text("last_login_at"),
 }, (t) => [check("users_due_day_ck", sql`${t.dueDay} BETWEEN 1 AND 28`)]);
 
+/**
+ * Einladungslinks zum Erstellen eines eigenen Kontos. Jedes Konto kann sie erzeugen (höchstens 5 offene gleichzeitig,
+ * je 7 Tage gültig). Der Token wird nur als Hash gespeichert; den Link sieht der Ersteller nur beim Erzeugen.
+ */
+export const invitations = sqliteTable("invitations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  creatorUserId: integer("creator_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: text("expires_at").notNull(),
+  consumedAt: text("consumed_at"),
+  consumedByUserId: integer("consumed_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  revokedAt: text("revoked_at"),
+  createdAt: text("created_at").notNull().default(now),
+}, (t) => [index("invitations_creator_idx").on(t.creatorUserId)]);
+
 export const subscriptions = sqliteTable("subscriptions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   /** Der Empfänger: bezahlt das Abo und bekommt das Geld. */

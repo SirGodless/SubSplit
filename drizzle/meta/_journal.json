@@ -8,6 +8,13 @@
       "when": 1793870967665,
       "tag": "0000_glorious_silver_fox",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793874388162,
+      "tag": "0001_misty_azazel",
+      "breakpoints": true
     }
   ]
 }

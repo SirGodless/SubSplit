@@ -4,14 +4,16 @@ Selbst gehostete Web-App, um gemeinsame Abos (Streaming, Software, …) unter Fr
 Konto. Wer ein Abo bezahlt, ist dessen **Empfänger**: Er legt das Abo an, trägt Mitzahler ein und bekommt das Geld.
 Dieselbe Person kann bei anderen wiederum **Mitzahler** sein.
 
-- **Konten für alle:** Der Betreiber legt Konten an und schickt jeder Person einen **einmaligen Einrichtungslink**,
-  über den sie ihr eigenes Passwort festlegt. Es gibt keine offene Registrierung und keine Magic-Links mehr.
+- **Konten für alle, per Einladung:** Neue Konten entstehen nur über **Einladungslinks**. Wer einen Link hat, wählt selbst
+  Benutzername, Anzeigename und Passwort. Jeder Link ist einmalig und 7 Tage gültig. Wer Links erstellen darf (alle oder
+  nur der Betreiber) und wie viele jedes Konto gleichzeitig offen haben darf (Standard 5), stellst du in der `.env` ein.
+  Es gibt keine offene Registrierung und keine Magic-Links.
 - **Startseite:** Pro Empfänger steht der offene Betrag (laufender Monat **plus Rückstand** aus Vormonaten), dazu der
   Gesamtbetrag über alle Empfänger. Ein Klick führt zur Zahlungsseite mit PayPal-Link, Bankdaten, Referenz-ID und der
   Aufschlüsselung pro Abo (wer zahlt wie viel, damit nachprüfbar ist, dass nicht mehr verlangt wird als nötig).
 - **Empfänger-Ansicht:** Übersicht mit Gesamtkosten, bezahlt/offen und Verlauf, Abos mit Preisen und Beteiligten.
-- **Betreiber:** verwaltet nur Konten und sieht keine Beträge, Zahlungsdaten oder Teilnehmer anderer, nur eine grobe
-  Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem.
+- **Betreiber:** sieht alle Konten, setzt Passwörter zurück und sperrt Konten, sieht aber keine Beträge, Zahlungsdaten
+  oder Teilnehmer anderer, nur eine grobe Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem.
 - Alle Beträge sind Integer-Cent. Anteile werden **auf den vollen Cent abgerundet**, der Rest (höchstens Beteiligte − 1
   Cent pro Abo und Monat) bleibt beim Empfänger.
 - Stack: TypeScript, Next.js (App Router), SQLite mit Drizzle, **verschlüsselte Datenbankdatei**, ein Docker-Container.
@@ -76,10 +78,12 @@ cp .env.example .env
 
 ## Erste Schritte in der App
 
-1. **Betreiber:** Reiter „Betreiber“ → „Konto anlegen“ (Benutzername und Anzeigename). Der Einrichtungslink erscheint
-   **nur einmal**; schicke ihn der Person (z. B. per Messenger). Gespeichert wird nur ein Hash. Über „Einladungslink“
-   bzw. „Passwort zurücksetzen“ erzeugst du einen neuen Link, der alte wird ungültig. Links gelten 7 Tage.
-2. **Jede Person** öffnet ihren Link und legt ihr Passwort fest (mindestens 12 Zeichen).
+1. **Einladen:** Reiter „Einladungen“ → „Einladungslink erstellen“. Der Link erscheint **nur einmal**; schicke ihn der
+   Person (z. B. per Messenger). Gespeichert wird nur ein Hash. Du siehst, welche Links offen, eingelöst (und von wem)
+   oder abgelaufen sind, und kannst offene Links widerrufen. Höchstens 5 Links gleichzeitig offen (einstellbar), je 7 Tage.
+2. **Die eingeladene Person** öffnet den Link und wählt Benutzername, Anzeigename (für Mitzahler sichtbar) und
+   Passwort (mindestens 12 Zeichen). **Betreiber:** Passwörter setzt du im Reiter „Betreiber“ über „Passwort
+   zurücksetzen“ zurück (neuer Link, 7 Tage gültig), Konten sperrst du dort ebenfalls.
 3. **Wer Abos anlegen will** (Betreiber eingeschlossen), trägt unter „Einstellungen“ Zahlungsdaten ein: mindestens
    **IBAN oder PayPal.Me**, beides ist möglich, dazu Empfängername und den **Fälligkeitstag** (1–28). Ein Konto ohne
    Zahlungsdaten ist ein reiner Mitzahler. Die Beispiel-IBAN aus der Dokumentation wird abgelehnt.
@@ -117,6 +121,8 @@ Benutzer, Empfängerdaten und Fälligkeitstag liegen **nicht** in der `.env`, so
 | `SESSION_SECRET` | ja | Mindestens 32 Zeichen, signiert die Sitzungen. |
 | `DB_ENCRYPTION_KEY` | ja | Mindestens 32 Zeichen, verschlüsselt die gesamte Datenbankdatei. **Getrennt sichern; Verlust = Datenverlust.** Muss sich von `SESSION_SECRET` unterscheiden. |
 | `APP_NAME` | nein | Name im Verwendungszweck `<ID> <App-Name> <JJJJ-MM>` (Standard `SubSplit`). |
+| `INVITATIONS_CREATORS` | nein | Wer Einladungslinks erstellen darf: `all` (jedes Konto, Standard) oder `operator` (nur der Betreiber). Wirkt sofort, auch auf bereits erstellte Links anderer. |
+| `INVITATIONS_MAX_ACTIVE` | nein | Wie viele Einladungslinks jedes Konto gleichzeitig offen haben darf (0–100, Standard 5; für alle gleich, auch den Betreiber). `0` schaltet Einladungen ganz ab. |
 | `ADMIN_IDLE_TIMEOUT_MINUTES` | nein | Abmeldung nach so vielen Minuten ohne Aktion (1–1440, Standard 30). Jede Aktion setzt den Timer auf den vollen Wert zurück; es gibt keine absolute Obergrenze. |
 | `TRUSTED_PROXY_CIDR` | empfohlen | Adressbereich(e) des Proxy-Netzwerks, kommagetrennt. Nur von dort wird `X-Forwarded-For` übernommen. |
 | `SECURITY_LOG_FILE` | nein | Standard `/logs/security.log`. |
@@ -144,9 +150,9 @@ Das HTTPS-Zertifikat übernimmt Caddy.
 - **Client-IP:** Caddy verwirft eingehende `X-Forwarded-*`-Header standardmäßig (solange du `trusted_proxies` nicht
   setzt) und trägt die IP der Verbindung ein. Setze **kein** `trusted_proxies` in Caddy, außer vor Caddy hängt noch ein
   weiterer Proxy. (Aus Suchergebnissen und dem Caddy-Quellcode belegt, nicht aus der offiziellen Doku.)
-- **Einrichtungslinks im Access-Log:** Der Token steht im URL-Pfad (`/setup/<token>`) und landet in Caddys Access-Log,
+- **Links im Access-Log:** Der Token steht im URL-Pfad (`/invite/<token>` bzw. `/setup/<token>`) und landet in Caddys Access-Log,
   falls du eines aktivierst. Du kannst ihn z. B. mit einem Log-Filter auf `request>uri` schwärzen
-  (`regexp "^/setup/[A-Za-z0-9_-]+" "/setup/REDACTED"`). **Diese Syntax ist nicht gegen die Caddy-Doku geprüft.** Die
+  (`regexp "^/(setup|invite)/[A-Za-z0-9_-]+" "/$1/REDACTED"`). **Diese Syntax ist nicht gegen die Caddy-Doku geprüft.** Die
   Links sind einmalig und befristet; die App setzt `Referrer-Policy: no-referrer`.
 
 ## Sicherheits-Log und fail2ban
@@ -160,8 +166,9 @@ Bei jedem fehlgeschlagenen Anmeldeversuch und bei jedem ungültigen Einrichtungs
 ```
 
 - `admin_login` = falscher Benutzername/Passwort (auch bei gesperrten Konten), `invalid_token` = unbekannter oder
-  bereits verbrauchter Einrichtungslink.
-- Ein **abgelaufener** Einrichtungslink zählt nicht als Fehlversuch: `SUBSPLIT_NOTICE … reason=revoked_token`.
+  kaputter Einrichtungs- bzw. Einladungslink.
+- Ein **abgelaufener, bereits eingelöster oder widerrufener** Link zählt nicht als Fehlversuch (jemand mit einem alten
+  Link soll nicht gebannt werden): `SUBSPLIT_NOTICE … reason=revoked_token`.
 - Token, Passwörter und andere Geheimnisse stehen nie im Log. Ist keine gültige Client-IP bestimmbar, steht
   `ip=unknown` (kein Ban möglich, dafür nie eine falsche Adresse).
 - Die Datei liegt per Bind-Mount unter `./logs/security.log` auf dem Host.

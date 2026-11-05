@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ctx } from "@/lib/server/context";
+import { canCreateInvitations } from "@/lib/services/invitations";
 import type { UserRow } from "@/lib/services/users";
 import LogoutButton from "./LogoutButton";
 import SessionKeepAlive from "./SessionKeepAlive";
@@ -9,12 +10,14 @@ import ThemeToggle from "./ThemeToggle";
 const LINKS = [
   { href: "/", label: "Start" },
   { href: "/manage", label: "Verwalten" },
+  { href: "/invitations", label: "Einladungen" },
   { href: "/settings", label: "Einstellungen" },
 ] as const;
 
 /** Rahmen für alle angemeldeten Seiten: Kopfzeile, Navigation, Sitzungsverlängerung. */
 export default function AppShell({ user, active, children }: { user: UserRow; active: string; children: ReactNode }) {
-  const links = user.role === "operator" ? [...LINKS, { href: "/operator", label: "Betreiber" }] : LINKS;
+  const base = canCreateInvitations(user, ctx().config.invite) ? LINKS : LINKS.filter((l) => l.href !== "/invitations");
+  const links = user.role === "operator" ? [...base, { href: "/operator", label: "Betreiber" }] : base;
   return (
     <>
       <header className="topbar">

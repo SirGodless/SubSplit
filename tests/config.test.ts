@@ -98,3 +98,19 @@ describe("Inaktivitäts-Timeout und Warnschwellen", () => {
     for (const bad of ["1", "abc", "0.5"]) expect(problems({ ...valid, UNUSUAL_FACTOR: bad }).join(), bad).toMatch(/UNUSUAL_FACTOR/);
   });
 });
+
+describe("Einladungen per Umgebung", () => {
+  it("Standard: alle Konten, 5 gleichzeitig", () => {
+    expect(loadConfig(valid).invite).toEqual({ creators: "all", maxActive: 5 });
+  });
+  it("einstellbar: nur Betreiber, anderes Limit, 0 = abgeschaltet", () => {
+    expect(loadConfig({ ...valid, INVITATIONS_CREATORS: "operator", INVITATIONS_MAX_ACTIVE: "12" }).invite).toEqual({ creators: "operator", maxActive: 12 });
+    expect(loadConfig({ ...valid, INVITATIONS_CREATORS: "OPERATOR" }).invite.creators).toBe("operator");
+    expect(loadConfig({ ...valid, INVITATIONS_MAX_ACTIVE: "0" }).invite.maxActive).toBe(0);
+    expect(loadConfig({ ...valid, INVITATIONS_MAX_ACTIVE: "100" }).invite.maxActive).toBe(100);
+  });
+  it("lehnt ungültige Werte ab", () => {
+    for (const bad of ["jeder", "admin", "users"]) expect(problems({ ...valid, INVITATIONS_CREATORS: bad }).join(), bad).toMatch(/INVITATIONS_CREATORS/);
+    for (const bad of ["-1", "101", "abc", "2.5", "1000"]) expect(problems({ ...valid, INVITATIONS_MAX_ACTIVE: bad }).join(), bad).toMatch(/INVITATIONS_MAX_ACTIVE/);
+  });
+});

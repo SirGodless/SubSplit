@@ -36,11 +36,11 @@ export default function OperatorApp({ selfId }: { selfId: number }) {
   return (
     <>
       <h1 className="h" style={{ marginBottom: 6 }}>Konten</h1>
-      <p className="muted" style={{ marginTop: 0, fontSize: 14 }}>Du verwaltest hier nur Konten. Beträge, Zahlungsdaten und Teilnehmer anderer siehst du nicht, nur eine grobe Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem.</p>
+      <p className="muted" style={{ marginTop: 0, fontSize: 14 }}>Du siehst hier alle Konten, setzt Passwörter zurück und sperrst Konten. Beträge, Zahlungsdaten und Teilnehmer anderer siehst du nicht, nur eine grobe Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem.</p>
       {msg && <p className={`notice${msg.kind === "ok" ? " notice--ok" : ""}`} role={msg.kind === "err" ? "alert" : "status"} style={{ marginBottom: 16 }}>{msg.text}</p>}
       {link && (
         <div className="notice notice--ok" style={{ marginBottom: 18 }}>
-          <p className="label">Einrichtungslink für {link.name} · wird nur jetzt angezeigt, 7 Tage gültig</p>
+          <p className="label">Link für {link.name} · wird nur jetzt angezeigt, 7 Tage gültig; nach dem Öffnen legt die Person ein neues Passwort fest</p>
           <p className="mono" style={{ wordBreak: "break-all", margin: "8px 0" }}>{link.link}</p>
           <CopyButton value={link.link} label="Link kopieren" />
         </div>
@@ -76,21 +76,7 @@ export default function OperatorApp({ selfId }: { selfId: number }) {
         </table>
       </div>
 
-      <h2 className="h" style={{ margin: "30px 0 12px" }}>Konto anlegen</h2>
-      <form className="stack" style={{ maxWidth: 420 }} onSubmit={(e) => {
-        e.preventDefault();
-        const form = e.currentTarget;
-        const f = new FormData(form);
-        void run(async () => {
-          const d = await api<{ link: string }>("/api/operator/accounts", "POST", { username: f.get("username"), displayName: f.get("displayName") });
-          setLink({ name: String(f.get("displayName")), link: d.link });
-          form.reset();
-        }, "Konto angelegt. Schicke der Person den Einrichtungslink.");
-      }}>
-        <label className="f"><span className="label">Benutzername (Kleinbuchstaben, Ziffern, . _ -)</span><input name="username" required minLength={3} maxLength={30} autoCapitalize="none" /></label>
-        <label className="f"><span className="label">Anzeigename (für Mitzahler sichtbar)</span><input name="displayName" required maxLength={60} /></label>
-        <button className="btn btn--primary">Konto anlegen</button>
-      </form>
+      <p className="muted" style={{ fontSize: 14, marginTop: 24 }}>Neue Konten entstehen über <b>Einladungslinks</b>: Jedes Konto kann sie im Reiter „Einladungen“ erstellen, du auch. Hier setzt du nur Passwörter zurück und sperrst oder entsperrst Konten.</p>
     </>
   );
 }
