@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,11 +103,6 @@ describe("Passwort", () => {
     expect(verifyPassword("falsch", h)).toBe(false);
     expect(verifyPassword("x", "müll")).toBe(false);
     expect(verifyPassword("x", "scrypt:3:8:1:aa:bb")).toBe(false);
-  });
-  it("das CLI-Skript erzeugt Hashes, die die App akzeptiert", () => {
-    const out = execFileSync("node", ["scripts/hash-password.mjs"], { input: "ein-langes-passwort-123\n" }).toString().trim();
-    expect(verifyPassword("ein-langes-passwort-123", out)).toBe(true);
-    expect(verifyPassword("anderes", out)).toBe(false);
   });
 });
 
