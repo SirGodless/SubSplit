@@ -14,7 +14,7 @@ export async function startup() {
   }
 
   try {
-    initDatabase(config.databasePath, config.migrationsDir);
+    initDatabase(config.databasePath, config.migrationsDir, config.dbEncryptionKey);
   } catch (err) {
     console.error("Datenbank-Initialisierung fehlgeschlagen:", err instanceof Error ? err.message : err);
     process.exit(1);

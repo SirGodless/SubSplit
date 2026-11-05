@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "74b03682-37dd-4b68-9705-a50f128de832",
+  "id": "3f39905e-87af-4626-a8d7-5d834d0e5de5",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "memberships": {
@@ -21,8 +21,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "participant_id": {
-          "name": "participant_id",
+        "user_id": {
+          "name": "user_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -59,10 +59,10 @@
           ],
           "isUnique": false
         },
-        "memberships_participant_idx": {
-          "name": "memberships_participant_idx",
+        "memberships_user_idx": {
+          "name": "memberships_user_idx",
           "columns": [
-            "participant_id"
+            "user_id"
           ],
           "isUnique": false
         }
@@ -81,12 +81,12 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "memberships_participant_id_participants_id_fk": {
-          "name": "memberships_participant_id_participants_id_fk",
+        "memberships_user_id_users_id_fk": {
+          "name": "memberships_user_id_users_id_fk",
           "tableFrom": "memberships",
-          "tableTo": "participants",
+          "tableTo": "users",
           "columnsFrom": [
-            "participant_id"
+            "user_id"
           ],
           "columnsTo": [
             "id"
@@ -108,105 +108,6 @@
         }
       }
     },
-    "participants": {
-      "name": "participants",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "display_name": {
-          "name": "display_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "is_owner": {
-          "name": "is_owner",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "token_hash": {
-          "name": "token_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "token_revoked_at": {
-          "name": "token_revoked_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "reminders_enabled": {
-          "name": "reminders_enabled",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "unsubscribe_token_hash": {
-          "name": "unsubscribe_token_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
-        }
-      },
-      "indexes": {
-        "participants_token_hash_unique": {
-          "name": "participants_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ],
-          "isUnique": true
-        },
-        "participants_unsubscribe_token_hash_unique": {
-          "name": "participants_unsubscribe_token_hash_unique",
-          "columns": [
-            "unsubscribe_token_hash"
-          ],
-          "isUnique": true
-        },
-        "participants_single_owner_uq": {
-          "name": "participants_single_owner_uq",
-          "columns": [
-            "is_owner"
-          ],
-          "isUnique": true,
-          "where": "\"participants\".\"is_owner\" = 1"
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "payments": {
       "name": "payments",
       "columns": {
@@ -217,8 +118,15 @@
           "notNull": true,
           "autoincrement": true
         },
-        "participant_id": {
-          "name": "participant_id",
+        "payer_user_id": {
+          "name": "payer_user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recipient_user_id": {
+          "name": "recipient_user_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -277,10 +185,11 @@
         }
       },
       "indexes": {
-        "payments_participant_month_uq": {
-          "name": "payments_participant_month_uq",
+        "payments_payer_recipient_month_uq": {
+          "name": "payments_payer_recipient_month_uq",
           "columns": [
-            "participant_id",
+            "payer_user_id",
+            "recipient_user_id",
             "month"
           ],
           "isUnique": true
@@ -291,15 +200,36 @@
             "reference_id"
           ],
           "isUnique": true
+        },
+        "payments_recipient_month_idx": {
+          "name": "payments_recipient_month_idx",
+          "columns": [
+            "recipient_user_id",
+            "month"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
-        "payments_participant_id_participants_id_fk": {
-          "name": "payments_participant_id_participants_id_fk",
+        "payments_payer_user_id_users_id_fk": {
+          "name": "payments_payer_user_id_users_id_fk",
           "tableFrom": "payments",
-          "tableTo": "participants",
+          "tableTo": "users",
           "columnsFrom": [
-            "participant_id"
+            "payer_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payments_recipient_user_id_users_id_fk": {
+          "name": "payments_recipient_user_id_users_id_fk",
+          "tableFrom": "payments",
+          "tableTo": "users",
+          "columnsFrom": [
+            "recipient_user_id"
           ],
           "columnsTo": [
             "id"
@@ -314,6 +244,10 @@
         "payments_amount_ck": {
           "name": "payments_amount_ck",
           "value": "\"payments\".\"amount_cents\" >= 0"
+        },
+        "payments_not_self_ck": {
+          "name": "payments_not_self_ck",
+          "value": "\"payments\".\"payer_user_id\" <> \"payments\".\"recipient_user_id\""
         }
       }
     },
@@ -465,6 +399,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "owner_user_id": {
+          "name": "owner_user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "name": {
           "name": "name",
           "type": "text",
@@ -496,11 +437,187 @@
           "default": "(strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
         }
       },
-      "indexes": {},
-      "foreignKeys": {},
+      "indexes": {
+        "subscriptions_owner_idx": {
+          "name": "subscriptions_owner_idx",
+          "columns": [
+            "owner_user_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "subscriptions_owner_user_id_users_id_fk": {
+          "name": "subscriptions_owner_user_id_users_id_fk",
+          "tableFrom": "subscriptions",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "users": {
+      "name": "users",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'user'"
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "session_version": {
+          "name": "session_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "setup_token_hash": {
+          "name": "setup_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "setup_expires_at": {
+          "name": "setup_expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "disabled_at": {
+          "name": "disabled_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "recipient_name": {
+          "name": "recipient_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "paypal_me": {
+          "name": "paypal_me",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "iban": {
+          "name": "iban",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "due_day": {
+          "name": "due_day",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "reminders_enabled": {
+          "name": "reminders_enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
+        },
+        "last_login_at": {
+          "name": "last_login_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "users_username_unique": {
+          "name": "users_username_unique",
+          "columns": [
+            "username"
+          ],
+          "isUnique": true
+        },
+        "users_setup_token_hash_unique": {
+          "name": "users_setup_token_hash_unique",
+          "columns": [
+            "setup_token_hash"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "users_due_day_ck": {
+          "name": "users_due_day_ck",
+          "value": "\"users\".\"due_day\" BETWEEN 1 AND 28"
+        }
+      }
     }
   },
   "views": {},

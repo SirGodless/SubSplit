@@ -4,11 +4,8 @@ import { isValidIban } from "@/lib/config/iban";
 
 const valid = {
   BASE_URL: "https://abos.example.org/",
-  ADMIN_PASSWORD_HASH: "scrypt:16384:8:1:c2FsdA:aGFzaA",
   SESSION_SECRET: "x".repeat(32),
-  RECIPIENT_NAME: "Max Mustermann",
-  RECIPIENT_PAYPAL_ME: "MaxMuster",
-  RECIPIENT_IBAN: "DE89 3704 0044 0532 0130 00",
+  DB_ENCRYPTION_KEY: "y".repeat(32),
 };
 
 function problems(env: Record<string, string | undefined>): string[] {
@@ -39,33 +36,30 @@ describe("loadConfig", () => {
   it("lädt eine gültige Konfiguration mit Standardwerten", () => {
     const c = loadConfig(valid);
     expect(c.baseUrl).toBe("https://abos.example.org");
-    expect(c.recipientIban).toBe("DE89370400440532013000");
-    expect(c.dueDay).toBe(1);
     expect(c.securityLogFile).toBe("/logs/security.log");
+    expect(c.databasePath).toBe("/data/subsplit.db");
     expect(c.trustedProxyCidrs).toEqual([]);
     expect(c.appName).toBe("SubSplit");
+    expect(c.idleSeconds).toBe(30 * 60);
+    expect(c.unusualMonthlyTotalCents).toBe(50000);
+    expect(c.unusualFactor).toBe(3);
+  });
+  it("braucht weder Admin-Zugang noch Empfängerdaten noch Fälligkeitstag (liegen im Konto)", () => {
+    expect(problems(valid)).toEqual([]);
   });
   it("sammelt alle Fehler auf einmal", () => {
-    expect(problems({}).length).toBeGreaterThanOrEqual(5);
+    expect(problems({}).length).toBeGreaterThanOrEqual(3);
   });
-  it("bricht bei ungültiger IBAN ab", () => {
-    expect(problems({ ...valid, RECIPIENT_IBAN: "DE89370400440532013001" }).join()).toMatch(/RECIPIENT_IBAN/);
-  });
-  it("bricht bei unerlaubten PayPal-Zeichen ab", () => {
-    for (const bad of ["max/muster", "paypal.me/max", "max muster", "max?x=1", "a".repeat(21)]) {
-      expect(problems({ ...valid, RECIPIENT_PAYPAL_ME: bad }).join(), bad).toMatch(/RECIPIENT_PAYPAL_ME/);
-    }
-  });
-  it("prüft DUE_DAY, SESSION_SECRET, BASE_URL", () => {
-    expect(problems({ ...valid, DUE_DAY: "0" }).join()).toMatch(/DUE_DAY/);
-    expect(problems({ ...valid, DUE_DAY: "29" }).join()).toMatch(/DUE_DAY/);
-    expect(loadConfig({ ...valid, DUE_DAY: "15" }).dueDay).toBe(15);
+  it("prüft SESSION_SECRET, DB_ENCRYPTION_KEY und BASE_URL", () => {
     expect(problems({ ...valid, SESSION_SECRET: "kurz" }).join()).toMatch(/SESSION_SECRET/);
+    expect(problems({ ...valid, DB_ENCRYPTION_KEY: "kurz" }).join()).toMatch(/DB_ENCRYPTION_KEY/);
+    expect(problems({ ...valid, DB_ENCRYPTION_KEY: valid.SESSION_SECRET }).join()).toMatch(/verschieden/);
     expect(problems({ ...valid, BASE_URL: "ftp://x" }).join()).toMatch(/BASE_URL/);
   });
   it("gibt Secrets nie in Fehlermeldungen aus", () => {
-    const msg = problems({ ...valid, SESSION_SECRET: "geheim" }).join();
+    const msg = problems({ ...valid, SESSION_SECRET: "geheim", DB_ENCRYPTION_KEY: "auchgeheim" }).join();
     expect(msg).not.toContain("geheim");
+    expect(msg).not.toContain("auchgeheim");
   });
   it("validiert TRUSTED_PROXY_CIDR", () => {
     expect(loadConfig({ ...valid, TRUSTED_PROXY_CIDR: "172.18.0.0/16, fd00::/8" }).trustedProxyCidrs).toHaveLength(2);
@@ -91,10 +85,16 @@ describe("PayPal-Linkformat per Umgebung", () => {
   });
 });
 
-describe("Admin-Inaktivitäts-Timeout", () => {
-  it("Standard 30 Minuten, per Umgebung einstellbar, ungültige Werte werden abgelehnt", () => {
-    expect(loadConfig(valid).adminIdleSeconds).toBe(30 * 60);
-    expect(loadConfig({ ...valid, ADMIN_IDLE_TIMEOUT_MINUTES: "60" }).adminIdleSeconds).toBe(3600);
+describe("Inaktivitäts-Timeout und Warnschwellen", () => {
+  it("Timeout: Standard 30 Minuten, einstellbar, ungültige Werte abgelehnt", () => {
+    expect(loadConfig({ ...valid, ADMIN_IDLE_TIMEOUT_MINUTES: "60" }).idleSeconds).toBe(3600);
     for (const bad of ["0", "-5", "abc", "1.5", "1441"]) expect(problems({ ...valid, ADMIN_IDLE_TIMEOUT_MINUTES: bad }).join(), bad).toMatch(/ADMIN_IDLE_TIMEOUT_MINUTES/);
+  });
+  it("Warnschwellen einstellbar, ungültige Werte abgelehnt", () => {
+    const c = loadConfig({ ...valid, UNUSUAL_MONTHLY_TOTAL_EUR: "1000", UNUSUAL_FACTOR: "2.5" });
+    expect(c.unusualMonthlyTotalCents).toBe(100000);
+    expect(c.unusualFactor).toBe(2.5);
+    for (const bad of ["0", "abc", "-1", "1.5"]) expect(problems({ ...valid, UNUSUAL_MONTHLY_TOTAL_EUR: bad }).join(), bad).toMatch(/UNUSUAL_MONTHLY_TOTAL_EUR/);
+    for (const bad of ["1", "abc", "0.5"]) expect(problems({ ...valid, UNUSUAL_FACTOR: bad }).join(), bad).toMatch(/UNUSUAL_FACTOR/);
   });
 });

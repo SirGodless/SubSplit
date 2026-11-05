@@ -1,24 +1,22 @@
 import { BlockList, isIP } from "node:net";
 import { DEFAULT_PAYPAL_FORMAT, type PaypalLinkFormat } from "@/lib/pay/paypal";
-import { isValidIban, normalizeIban } from "./iban";
 
 export interface Config {
   appName: string;
   baseUrl: string;
-  adminUsername: string;
-  adminPasswordHash: string;
-  /** Inaktivitäts-Timeout der Admin-Sitzung in Sekunden. */
-  adminIdleSeconds: number;
   sessionSecret: string;
-  recipientName: string;
-  recipientPaypalMe: string;
-  recipientIban: string;
+  /** Schlüssel der Datenbankverschlüsselung (ganze Datei inkl. WAL). Verlust = Datenverlust, getrennt sichern. */
+  dbEncryptionKey: string;
+  /** Inaktivitäts-Timeout der Sitzung in Sekunden. */
+  idleSeconds: number;
   paypalFormat: PaypalLinkFormat;
-  dueDay: number;
   securityLogFile: string;
   trustedProxyCidrs: string[];
   databasePath: string;
   migrationsDir: string;
+  /** Warnschwelle für die Monatssumme eines Empfängers (Cent) und Faktor gegenüber dem 3-Monats-Durchschnitt. */
+  unusualMonthlyTotalCents: number;
+  unusualFactor: number;
 }
 
 export class ConfigError extends Error {
@@ -45,8 +43,8 @@ export function isValidCidr(value: string): boolean {
 }
 
 /**
- * Liest und validiert alle Umgebungsvariablen. Sammelt alle Fehler und wirft
- * einmal ConfigError – nie Secrets in Fehlermeldungen.
+ * Liest und validiert die Umgebungsvariablen. Es sind nur noch Systemwerte: Benutzer, Empfängerdaten
+ * und Fälligkeitstag liegen in der Datenbank (pro Konto). Sammelt alle Fehler, nie Secrets in Meldungen.
  */
 export function loadConfig(env: Env = process.env): Config {
   const problems: string[] = [];
@@ -67,28 +65,20 @@ export function loadConfig(env: Env = process.env): Config {
     }
   }
 
-  const adminUsername = get("ADMIN_USERNAME") || "admin";
-  const adminPasswordHash = required("ADMIN_PASSWORD_HASH");
-  let adminIdleSeconds = 30 * 60;
+  const sessionSecret = required("SESSION_SECRET", "mindestens 32 Zeichen");
+  if (sessionSecret && sessionSecret.length < 32) problems.push("SESSION_SECRET ist kürzer als 32 Zeichen.");
+
+  const dbEncryptionKey = required("DB_ENCRYPTION_KEY", "mindestens 32 Zeichen, z. B. openssl rand -hex 32");
+  if (dbEncryptionKey && dbEncryptionKey.length < 32) problems.push("DB_ENCRYPTION_KEY ist kürzer als 32 Zeichen.");
+  if (dbEncryptionKey && sessionSecret && dbEncryptionKey === sessionSecret) problems.push("DB_ENCRYPTION_KEY und SESSION_SECRET müssen verschieden sein.");
+
+  let idleSeconds = 30 * 60;
   const idleRaw = get("ADMIN_IDLE_TIMEOUT_MINUTES");
   if (idleRaw) {
     const m = Number(idleRaw);
     if (!/^\d{1,4}$/.test(idleRaw) || m < 1 || m > 1440) problems.push("ADMIN_IDLE_TIMEOUT_MINUTES muss eine ganze Zahl von 1 bis 1440 (Minuten) sein.");
-    else adminIdleSeconds = m * 60;
+    else idleSeconds = m * 60;
   }
-  const sessionSecret = required("SESSION_SECRET", "mindestens 32 Zeichen");
-  if (sessionSecret && sessionSecret.length < 32) problems.push("SESSION_SECRET ist kürzer als 32 Zeichen.");
-
-  const recipientName = required("RECIPIENT_NAME");
-  if (recipientName.length > 70) problems.push("RECIPIENT_NAME ist länger als 70 Zeichen (EPC-Limit).");
-
-  const recipientPaypalMe = required("RECIPIENT_PAYPAL_ME", "nur der Name nach paypal.me/");
-  if (recipientPaypalMe && !/^[A-Za-z0-9]{1,20}$/.test(recipientPaypalMe)) {
-    problems.push("RECIPIENT_PAYPAL_ME darf nur Buchstaben und Ziffern enthalten (max. 20 Zeichen), ohne 'paypal.me/'.");
-  }
-
-  const ibanRaw = required("RECIPIENT_IBAN");
-  if (ibanRaw && !isValidIban(ibanRaw)) problems.push("RECIPIENT_IBAN hat eine ungültige Prüfsumme oder ein ungültiges Format.");
 
   // PayPal-Linkformat (nur Host-Allowlist, damit ein Tippfehler keine Zahlungen an fremde Seiten lenkt)
   const paypalFormat: PaypalLinkFormat = { ...DEFAULT_PAYPAL_FORMAT };
@@ -111,14 +101,17 @@ export function loadConfig(env: Env = process.env): Config {
   else if (curRaw === "false") paypalFormat.appendCurrency = false;
   else if (curRaw) problems.push('PAYPAL_APPEND_CURRENCY muss "true" oder "false" sein.');
 
-  let dueDay = 1;
-  const dueRaw = get("DUE_DAY");
-  if (dueRaw) {
-    dueDay = Number(dueRaw);
-    if (!/^\d{1,2}$/.test(dueRaw) || dueDay < 1 || dueDay > 28) {
-      problems.push("DUE_DAY muss eine ganze Zahl von 1 bis 28 sein.");
-      dueDay = 1;
-    }
+  let unusualMonthlyTotalCents = 500 * 100;
+  const thrRaw = get("UNUSUAL_MONTHLY_TOTAL_EUR");
+  if (thrRaw) {
+    if (!/^\d{1,7}$/.test(thrRaw) || Number(thrRaw) < 1) problems.push("UNUSUAL_MONTHLY_TOTAL_EUR muss eine ganze Zahl >= 1 (Euro) sein.");
+    else unusualMonthlyTotalCents = Number(thrRaw) * 100;
+  }
+  let unusualFactor = 3;
+  const facRaw = get("UNUSUAL_FACTOR");
+  if (facRaw) {
+    if (!/^\d{1,3}(\.\d{1,2})?$/.test(facRaw) || Number(facRaw) < 1.1) problems.push("UNUSUAL_FACTOR muss eine Zahl >= 1.1 sein.");
+    else unusualFactor = Number(facRaw);
   }
 
   const trustedProxyCidrs = get("TRUSTED_PROXY_CIDR")
@@ -134,19 +127,16 @@ export function loadConfig(env: Env = process.env): Config {
   return {
     appName: get("APP_NAME") || "SubSplit",
     baseUrl,
-    adminUsername,
-    adminPasswordHash,
-    adminIdleSeconds,
     sessionSecret,
-    recipientName,
-    recipientPaypalMe,
-    recipientIban: normalizeIban(ibanRaw),
+    dbEncryptionKey,
+    idleSeconds,
     paypalFormat,
-    dueDay,
     securityLogFile: get("SECURITY_LOG_FILE") || "/logs/security.log",
     trustedProxyCidrs,
     databasePath: get("DATABASE_PATH") || "/data/subsplit.db",
     migrationsDir: get("MIGRATIONS_DIR") || "./drizzle",
+    unusualMonthlyTotalCents,
+    unusualFactor,
   };
 }
 
