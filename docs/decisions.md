@@ -63,3 +63,6 @@
 - Teilnehmer-Seite ruft die Services direkt (Server Component), nicht die API; gleiche Token-Prüfung, gleiche Logzeilen, gleiche 404-Seite für unbekannte und widerrufene Links.
 - Admin-Oberfläche ist eine Client-App gegen die Admin-API (Übersicht, Abos, Teilnehmer).
 - **Mobil keine QR-Codes** (Breite <= 640 px): PayPal-Button öffnet den Link, "Per Überweisung bezahlen" klappt die Bankdaten mit Kopieren-Buttons auf. QR-Codes (PayPal und GiroCode) erscheinen nur am Desktop. Einen Link, der eine Banking-App mit vorausgefülltem GiroCode öffnet, gibt es nach meinem Kenntnisstand nicht (EPC definiert nur das QR-Textformat, keine URL); eine Spezifikation dafür habe ich nicht gefunden.
+
+## PayPal-Link ohne Währungscode (Praxistest)
+- Auf einem echten Handy mit PayPal-App öffnete der Link mit `EUR` am Betrag nur das Profil des Empfängers; ohne Währungscode wurde der Betrag übernommen. Standard daher `PAYPAL_APPEND_CURRENCY=false`. Risiko: Ohne Code gilt PayPals Standardwährung; bei Zahlern mit einem Konto in anderer Währung ist nicht geprüft, welche Währung angezeigt wird. In der App kontrollieren, dass Euro dasteht.

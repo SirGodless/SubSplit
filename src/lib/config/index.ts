@@ -97,8 +97,9 @@ export function loadConfig(env: Env = process.env): Config {
   if (decRaw === "comma") paypalFormat.decimalSeparator = ",";
   else if (decRaw && decRaw !== "dot") problems.push('PAYPAL_DECIMAL muss "dot" oder "comma" sein.');
   const curRaw = get("PAYPAL_APPEND_CURRENCY").toLowerCase();
-  if (curRaw === "false") paypalFormat.appendCurrency = false;
-  else if (curRaw && curRaw !== "true") problems.push('PAYPAL_APPEND_CURRENCY muss "true" oder "false" sein.');
+  if (curRaw === "true") paypalFormat.appendCurrency = true;
+  else if (curRaw === "false") paypalFormat.appendCurrency = false;
+  else if (curRaw) problems.push('PAYPAL_APPEND_CURRENCY muss "true" oder "false" sein.');
 
   let dueDay = 1;
   const dueRaw = get("DUE_DAY");

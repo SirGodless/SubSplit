@@ -35,8 +35,12 @@ describe("EPC / GiroCode", () => {
 
 describe("PayPal-Link (eine Stelle, konfigurierbar)", () => {
   it("Standardformat", () => {
-    expect(buildPaypalLink("MaxMuster", 1234)).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34EUR");
-    expect(formatPaypalAmount(5)).toBe("0.05EUR");
+    expect(buildPaypalLink("MaxMuster", 1234)).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34");
+    expect(formatPaypalAmount(5)).toBe("0.05");
+  });
+  it("Währungscode lässt sich per Konfiguration wieder anhängen", () => {
+    const f = { baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: "." as const, appendCurrency: true, currency: "EUR" };
+    expect(buildPaypalLink("MaxMuster", 1234, f)).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34EUR");
   });
   it("Varianten über Konfiguration", () => {
     const f = { baseUrl: "https://paypal.me/", decimalSeparator: "," as const, appendCurrency: false, currency: "EUR" };
@@ -56,7 +60,7 @@ describe("Zahlungslinks", () => {
       { name: "Max Mustermann", paypalMe: "MaxMuster", iban: "DE89370400440532013000", appName: "SubSplit" },
       { referenceId: "K7M2QX", month: "2026-11", amountCents: 1234 },
     );
-    expect(l.paypalUrl).toContain("/MaxMuster/12.34EUR");
+    expect(l.paypalUrl).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34");
     expect(l.paypalQrSvg).toMatch(/^<svg/);
     expect(l.giroCodeSvg).toMatch(/^<svg/);
     expect(l.remittance).toBe("K7M2QX SubSplit 2026-11");

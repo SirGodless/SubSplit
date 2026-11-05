@@ -1,8 +1,9 @@
 /**
  * EINZIGE Stelle, an der der PayPal-Link gebaut wird. Das Format ist nur teilweise belegt:
- * belegt (PayPal-Hilfe) ist, dass der Betrag am Ende des Links steht und die Währung direkt dahinter
- * (z. B. PayPal.Me/DiaRusso/25AUD). Dezimaltrenner, Währungsangabe für EUR und die Domain-Variante
- * paypal.com/paypalme sind nicht ausdrücklich belegt -> hier anpassbar, mit Kleinstbetrag testen.
+ * belegt (PayPal-Hilfe) ist, dass der Betrag am Ende des Links steht und optional die Währung direkt dahinter
+ * (z. B. PayPal.Me/DiaRusso/25AUD). Standard ist OHNE Währungscode: Auf einem echten Handy hat nur diese Variante
+ * den Betrag in der PayPal-App angezeigt (mit "EUR" am Ende öffnete sich nur das Profil). Ohne Code gilt die
+ * Standardwährung von PayPal; in der App prüfen, dass Euro angezeigt wird. Per Umgebung umstellbar.
  */
 export interface PaypalLinkFormat {
   baseUrl: string;
@@ -15,7 +16,7 @@ export interface PaypalLinkFormat {
 export const DEFAULT_PAYPAL_FORMAT: PaypalLinkFormat = {
   baseUrl: "https://www.paypal.com/paypalme",
   decimalSeparator: ".",
-  appendCurrency: true,
+  appendCurrency: false,
   currency: "EUR",
 };
 

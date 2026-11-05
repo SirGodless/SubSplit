@@ -228,21 +228,22 @@ Bitte vor dem Livebetrieb prüfen:
    verschickst. Die Notiz lässt sich über den Link nicht vorausfüllen, deshalb steht die Referenz-ID mit
    Kopieren-Button daneben.
 
-   *Öffnet der Link auf dem Handy die PayPal-App?* Das ist **nicht offiziell dokumentiert**. Es ist ein normaler
-   https-Link; ob er die App öffnet und dort den Betrag anzeigt, entscheidet das Betriebssystem bzw. PayPal. Ein
-   PayPal-Schema (`paypal://…`) zum Vorausfüllen von Empfänger/Betrag/Notiz ist mir nicht bekannt, die App lässt
-   sich nicht erzwingen. Ein einzelner Nutzerbericht aus dem PayPal-Forum meldet, dass die App mit angehängtem
-   Währungscode ohne Betrag aufgehen kann (ungeprüft). Zum Testen der Varianten (in `.env`, danach nur
-   `docker compose up -d`, kein neuer Build):
+   *Öffnet der Link auf dem Handy die PayPal-App mit Betrag?* Das ist **nicht offiziell dokumentiert**; es ist ein
+   normaler https-Link, und ob die App ihn mit Betrag öffnet, entscheidet PayPal. Ein PayPal-Schema (`paypal://…`)
+   zum Vorausfüllen ist mir nicht bekannt. **Praxistest des Betreibers:** Mit angehängtem Währungscode (`…/12.34EUR`)
+   öffnete die App nur das Profil des Empfängers, **ohne** Währungscode (`…/12.34`) wurde der Betrag übernommen.
+   Der Standard ist deshalb **ohne** Währungscode. Ohne Code gilt die Standardwährung von PayPal, prüfe beim Test, dass
+   in der App Euro angezeigt wird. Die Notiz bzw. Referenz-ID lässt sich nicht vorausfüllen. Falls PayPal sein Verhalten
+   ändert, lassen sich die Varianten per `.env` umstellen (danach nur `docker compose up -d`, kein neuer Build):
 
    | Variable | Werte | Standard |
    |---|---|---|
-   | `PAYPAL_APPEND_CURRENCY` | `true` / `false` (Betrag mit oder ohne `EUR`) | `true` |
+   | `PAYPAL_APPEND_CURRENCY` | `true` / `false` (Betrag mit oder ohne `EUR`) | `false` |
    | `PAYPAL_LINK_BASE` | `https://www.paypal.com/paypalme` oder `https://paypal.me` (nur diese Hosts erlaubt) | `https://www.paypal.com/paypalme` |
    | `PAYPAL_DECIMAL` | `dot` / `comma` | `dot` |
 
-   Teste jede Variante mit einem Kleinstbetrag auf einem echten Handy mit installierter PayPal-App und prüfe, ob
-   Empfänger **und** Betrag stimmen. Die Link-Erzeugung liegt an einer Stelle ([`src/lib/pay/paypal.ts`](src/lib/pay/paypal.ts)).
+   Die Link-Erzeugung liegt an einer Stelle ([`src/lib/pay/paypal.ts`](src/lib/pay/paypal.ts)).
+
 2. **GiroCode (EPC069-12):** Das Original-PDF war bei der Entwicklung nicht abrufbar. Das Payload-Layout
    (BCD, Version 002, UTF-8, SCT, BIC leer, Name, IBAN, `EURx.xx`, Verwendungszweck ≤ 140 Zeichen, Fehlerkorrektur M)
    folgt der Spezifikation nach bestem Wissen und Sekundärquellen. **Prüfe die BIC-Regel von Version 002 gegen die

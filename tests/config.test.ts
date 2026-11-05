@@ -78,9 +78,9 @@ describe("loadConfig", () => {
 
 describe("PayPal-Linkformat per Umgebung", () => {
   it("Standard und Varianten", () => {
-    expect(loadConfig(valid).paypalFormat).toEqual({ baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: ".", appendCurrency: true, currency: "EUR" });
-    const c = loadConfig({ ...valid, PAYPAL_LINK_BASE: "https://paypal.me/", PAYPAL_APPEND_CURRENCY: "false", PAYPAL_DECIMAL: "comma" });
-    expect(c.paypalFormat).toEqual({ baseUrl: "https://paypal.me", decimalSeparator: ",", appendCurrency: false, currency: "EUR" });
+    expect(loadConfig(valid).paypalFormat).toEqual({ baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: ".", appendCurrency: false, currency: "EUR" });
+    const c = loadConfig({ ...valid, PAYPAL_LINK_BASE: "https://paypal.me/", PAYPAL_APPEND_CURRENCY: "true", PAYPAL_DECIMAL: "comma" });
+    expect(c.paypalFormat).toEqual({ baseUrl: "https://paypal.me", decimalSeparator: ",", appendCurrency: true, currency: "EUR" });
   });
   it("lehnt fremde Hosts, http, Parameter und unbekannte Werte ab", () => {
     for (const bad of ["https://evil.example/paypalme", "http://paypal.com/paypalme", "https://paypal.com.evil.example/x", "https://paypal.me/?a=1", "paypal.me"]) {
