@@ -14,7 +14,14 @@ export async function startup() {
   }
 
   try {
-    initDatabase(config.databasePath, config.migrationsDir, config.dbEncryptionKey);
+    const handle = initDatabase(config.databasePath, config.migrationsDir, config.dbEncryptionKey);
+    // Ersteinrichtung: gibt es einen Betreiber ohne Passwort, steht ein einmaliger Einrichtungslink im Log.
+    const { ensureOperator, bootstrapSetupToken } = await import("@/lib/services/users");
+    ensureOperator(handle.db);
+    const boot = bootstrapSetupToken(handle.db);
+    if (boot) {
+      console.log(`Ersteinrichtung: Öffne ${config.baseUrl}/setup/${boot.token} (24 Stunden gültig) und lege das Passwort für das Konto "${boot.username}" fest.`);
+    }
   } catch (err) {
     console.error("Datenbank-Initialisierung fehlgeschlagen:", err instanceof Error ? err.message : err);
     process.exit(1);

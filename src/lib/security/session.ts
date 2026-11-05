@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { safeEqual } from "./tokens";
 
-export const SESSION_COOKIE = "subsplit_admin";
+export const SESSION_COOKIE = "subsplit_session";
 /** Inaktivitäts-Timeout: Jede gültige Admin-Anfrage verlängert die Sitzung um diese Zeit. */
 export const DEFAULT_IDLE_SECONDS = 30 * 60;
 

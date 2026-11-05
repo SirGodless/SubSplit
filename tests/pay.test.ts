@@ -54,23 +54,34 @@ describe("PayPal-Link (eine Stelle, konfigurierbar)", () => {
 });
 
 describe("Zahlungslinks", () => {
-  it("ein Satz pro Monatszahlung mit Verwendungszweck <ID> <App> <Monat>", async () => {
+  const both = { name: "Max Mustermann", paypalMe: "MaxMuster", iban: "DE89370400440532013000", appName: "SubSplit" };
+  const pay = { referenceId: "K7M2QX", month: "2026-11", amountCents: 1234 };
+
+  it("ein Satz pro Empfänger mit Verwendungszweck <ID> <App> <Monat>", async () => {
     expect(buildRemittance("K7M2QX", "SubSplit", "2026-11")).toBe("K7M2QX SubSplit 2026-11");
-    const l = await buildPaymentLinks(
-      { name: "Max Mustermann", paypalMe: "MaxMuster", iban: "DE89370400440532013000", appName: "SubSplit" },
-      { referenceId: "K7M2QX", month: "2026-11", amountCents: 1234 },
-    );
-    expect(l.paypalUrl).toBe("https://paypal.me/MaxMuster/12,34");
-    expect(l.paypalQrSvg).toMatch(/^<svg/);
-    expect(l.giroCodeSvg).toMatch(/^<svg/);
+    expect(buildRemittance("K7M2QX", "SubSplit", "2026-11", true)).toBe("K7M2QX SubSplit 2026-11 inkl. Rückstand");
+    const l = await buildPaymentLinks(both, pay);
+    expect(l.paypal!.url).toBe("https://paypal.me/MaxMuster/12,34");
+    expect(l.paypal!.qrSvg).toMatch(/^<svg/);
+    expect(l.bank!.giroCodeSvg).toMatch(/^<svg/);
+    expect(l.bank).toMatchObject({ iban: "DE89370400440532013000", recipientName: "Max Mustermann" });
     expect(l.remittance).toBe("K7M2QX SubSplit 2026-11");
   });
+  it("nur PayPal oder nur IBAN: es erscheint nur, was hinterlegt ist", async () => {
+    const onlyPaypal = await buildPaymentLinks({ ...both, iban: null }, pay);
+    expect(onlyPaypal.bank).toBeNull();
+    expect(onlyPaypal.paypal).not.toBeNull();
+    const onlyBank = await buildPaymentLinks({ ...both, paypalMe: null }, pay);
+    expect(onlyBank.paypal).toBeNull();
+    expect(onlyBank.bank).not.toBeNull();
+  });
+  it("der GiroCode enthält den Gesamtbetrag und den Zusatz bei Rückstand", async () => {
+    const l = await buildPaymentLinks(both, { ...pay, amountCents: 1500, withArrears: true });
+    expect(l.remittance).toContain("inkl. Rückstand");
+    expect(l.paypal!.url).toContain("/15,00");
+  });
   it("das konfigurierte PayPal-Format landet im gebauten Link", async () => {
-    const l = await buildPaymentLinks(
-      { name: "Max Mustermann", paypalMe: "MaxMuster", iban: "DE89370400440532013000", appName: "SubSplit",
-        paypalFormat: { baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: ".", appendCurrency: false, currency: "EUR" } },
-      { referenceId: "K7M2QX", month: "2026-11", amountCents: 1234 },
-    );
-    expect(l.paypalUrl).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34");
+    const l = await buildPaymentLinks({ ...both, paypalFormat: { baseUrl: "https://www.paypal.com/paypalme", decimalSeparator: ".", appendCurrency: false, currency: "EUR" } }, pay);
+    expect(l.paypal!.url).toBe("https://www.paypal.com/paypalme/MaxMuster/12.34");
   });
 });

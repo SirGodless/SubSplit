@@ -1,6 +1,6 @@
 import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "@/db/client";
-import { memberships, payments, subscriptions, users } from "@/db/schema";
+import { memberships, payments, subscriptionPrices, subscriptions, users } from "@/db/schema";
 import { addMonths, assertMonth, berlinDate, currentMonth, dueDateOf, type Month } from "@/lib/billing/month";
 import { AppError } from "./errors";
 import { endMembershipFrom, earliestChangeMonth } from "./manage";
@@ -382,4 +382,38 @@ export function getOperatorAccounts(db: Db, cfg: { thresholdCents: number; facto
       volumeClass: volumeClassOf(volume), warning,
     };
   });
+}
+
+// =====================================================================================
+// Verwaltungsdaten des Empfängers (eigene Abos mit Preisen und Beteiligten)
+// =====================================================================================
+
+export interface ManageData {
+  /** Darf Abos anlegen (IBAN oder PayPal.Me hinterlegt). */
+  canOwn: boolean;
+  earliestChangeMonth: Month;
+  subscriptions: Array<{ id: number; name: string; archivedAt: string | null }>;
+  prices: Array<{ subscriptionId: number; validFromMonth: Month; amountCents: number }>;
+  memberships: Array<{ subscriptionId: number; userId: number; displayName: string; weight: number; validFromMonth: Month; validToMonth: Month | null }>;
+}
+
+export function getManageData(db: Db, user: { id: number; iban: string | null; paypalMe: string | null }, now: Date = new Date()): ManageData {
+  const subs = db.select({ id: subscriptions.id, name: subscriptions.name, archivedAt: subscriptions.archivedAt }).from(subscriptions).where(eq(subscriptions.ownerUserId, user.id)).orderBy(subscriptions.name).all();
+  const ids = subs.map((s) => s.id);
+  const prices = ids.length ? db.select().from(subscriptionPrices).where(inArray(subscriptionPrices.subscriptionId, ids)).all() : [];
+  const ms = ids.length
+    ? db
+        .select({ m: memberships, displayName: users.displayName })
+        .from(memberships)
+        .innerJoin(users, eq(users.id, memberships.userId))
+        .where(inArray(memberships.subscriptionId, ids))
+        .all()
+    : [];
+  return {
+    canOwn: !!(user.iban || user.paypalMe),
+    earliestChangeMonth: earliestChangeMonth(db, user.id, now),
+    subscriptions: subs,
+    prices: prices.map((p) => ({ subscriptionId: p.subscriptionId, validFromMonth: p.validFromMonth, amountCents: p.amountCents })),
+    memberships: ms.map((r) => ({ subscriptionId: r.m.subscriptionId, userId: r.m.userId, displayName: r.displayName, weight: r.m.weight, validFromMonth: r.m.validFromMonth, validToMonth: r.m.validToMonth })),
+  };
 }
