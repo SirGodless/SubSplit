@@ -159,7 +159,7 @@ table.t td { padding: 10px 16px 10px 0; border-bottom: 1px solid var(--line); ve
 /* Klickbare Listenzeilen (Abo-Liste, Beteiligte) */
 .listbtn {
   display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px 16px; width: 100%; text-align: left;
-  padding: 14px 4px; background: transparent; color: var(--text); border: 0; border-bottom: 1px solid var(--line);
+  padding: 14px 12px; background: transparent; color: var(--text); border: 0; border-bottom: 1px solid var(--line);
   font: 400 16px var(--font-sans); cursor: pointer;
 }
 .listbtn:hover { background: var(--panel); }
@@ -173,3 +173,6 @@ table.t td { padding: 10px 16px 10px 0; border-bottom: 1px solid var(--line); ve
 @media (max-width: 520px) {
   .tabs button { padding: 14px 9px; letter-spacing: 0.06em; font-size: 11px; }
 }
+
+.chip--none { color: var(--muted); }
+.listbtn[aria-pressed="true"] { background: var(--panel-2); box-shadow: inset 4px 0 0 var(--accent); }

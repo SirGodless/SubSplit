@@ -245,11 +245,17 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
   // ---------- Verwaltung eines Abos ----------
   const sub = typeof view === "number" ? subs.subscriptions.find((s) => s.id === view) : undefined;
   if (sub) {
-    const members = subs.memberships.filter((m) => m.subscriptionId === sub.id).sort((a, b) => a.participantId - b.participantId || a.validFromMonth.localeCompare(b.validFromMonth));
-    const state = (m: Membership) =>
-      m.validToMonth !== null && m.validToMonth < thisMonth ? { label: "Beendet", cls: "chip--open" }
-      : m.validFromMonth > thisMonth ? { label: `Ab ${m.validFromMonth}`, cls: "chip--marked_paid" }
-      : { label: "Aktiv", cls: "chip--confirmed" };
+    // Eine Zeile pro Teilnehmer (auch ohne Beteiligung), Aktive zuerst
+    const rowsFor = people.map((p) => {
+      const ms = subs.memberships.filter((m) => m.subscriptionId === sub.id && m.participantId === p.id).sort((x, y) => x.validFromMonth.localeCompare(y.validFromMonth));
+      const active = ms.some((m) => m.validFromMonth <= thisMonth && (m.validToMonth === null || m.validToMonth >= thisMonth));
+      const future = ms.find((m) => m.validFromMonth > thisMonth);
+      const status = active ? { rank: 0, label: "Aktiv", cls: "chip--confirmed" }
+        : future ? { rank: 1, label: `Ab ${future.validFromMonth}`, cls: "chip--marked_paid" }
+        : ms.length > 0 ? { rank: 2, label: "Beendet", cls: "chip--open" }
+        : { rank: 3, label: "Nicht beteiligt", cls: "chip--none" };
+      return { p, ms, status };
+    }).sort((x, y) => x.status.rank - y.status.rank || x.p.displayName.localeCompare(y.p.displayName, "de"));
     const now = priceNow(sub.id);
     return (
       <section className="section" style={{ borderTop: 0 }}>
@@ -277,20 +283,17 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
         </div>
 
         <div className="section">
-          <h3 className="h">Beteiligte</h3>
-          {members.length === 0 ? <p className="muted">Noch niemand beteiligt.</p> : (
+          <h3 className="h">Teilnehmer</h3>
+          {rowsFor.length === 0 ? <p className="muted">Noch keine Teilnehmer angelegt (Tab „Teilnehmer“).</p> : (
             <div className="rows" style={{ margin: "12px 0 18px" }}>
-              {members.map((m, i) => {
-                const st = state(m);
-                return (
-                  <button key={i} type="button" className="listbtn" onClick={() => { setPerson(String(m.participantId)); setWeight(String(m.weight)); }}
-                    aria-label={`${personName(m.participantId)} in das Formular übernehmen`}>
-                    <span style={{ fontWeight: 600 }}>{personName(m.participantId)}</span>
-                    <span className="mono muted">{m.weight}× · {m.validFromMonth} – {m.validToMonth ?? "offen"}</span>
-                    <span className={`chip ${st.cls}`}>{st.label}</span>
-                  </button>
-                );
-              })}
+              {rowsFor.map(({ p, ms, status }) => (
+                <button key={p.id} type="button" className="listbtn" aria-pressed={person === String(p.id)}
+                  onClick={() => { setPerson(String(p.id)); setWeight(String(ms[ms.length - 1]?.weight ?? 1)); }}>
+                  <span style={{ fontWeight: 600 }}>{p.displayName}{p.isOwner && <span className="muted"> (du)</span>}</span>
+                  <span className="mono muted">{ms.length === 0 ? "–" : ms.map((m) => `${m.weight}× ${m.validFromMonth} – ${m.validToMonth ?? "offen"}`).join(" · ")}</span>
+                  <span className={`chip ${status.cls}`}>{status.label}</span>
+                </button>
+              ))}
             </div>
           )}
           {people.length > 0 && (
