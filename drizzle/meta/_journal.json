@@ -15,6 +15,13 @@
       "when": 1793874388162,
       "tag": "0001_misty_azazel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793879741882,
+      "tag": "0002_tiresome_molly_hayes",
+      "breakpoints": true
     }
   ]
 }

@@ -37,7 +37,7 @@ export default async function Home() {
                   <span className="name">{p.recipientName}</span>
                   <span className="amt">{formatEuro(p.outstandingCents)}</span>
                   <span className="muted" style={{ fontSize: 14 }}>
-                    {p.outstandingCents > 0 ? `fällig am ${formatDate(p.dueDate)}` : "wartet auf Bestätigung"}
+                    {p.outstandingCents > 0 ? `fällig am ${formatDate(p.dueDate)}` : p.expectedCents > 0 ? `Dauerauftrag: ${formatEuro(p.expectedCents)} werden automatisch bestätigt` : "wartet auf Bestätigung"}
                     {p.arrearsCents > 0 && <span className="accent"> · inkl. {formatEuro(p.arrearsCents)} Rückstand</span>}
                   </span>
                   <span className="label" style={{ textAlign: "right" }}>{p.outstandingCents > 0 ? "Bezahlen ›" : "Ansehen ›"}</span>
@@ -63,7 +63,7 @@ export default async function Home() {
                       {s.state === "ending" && <span className="accent"> · endet nach {s.to}</span>}
                     </div>
                   </div>
-                  {s.leave && s.state !== "ending" && <LeaveButton id={s.id} name={s.name} effectiveMonth={s.leave.effectiveMonth} reason={s.leave.reason} />}
+                  {s.leave && s.state !== "ending" && <LeaveButton id={s.id} name={s.name} effectiveMonth={s.leave.effectiveMonth} />}
                 </div>
               ))}
             </div>

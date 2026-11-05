@@ -1,8 +1,8 @@
-import { and, eq, gte, inArray, lt, lte, ne, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import type { Db } from "@/db/client";
-import { memberships, payments, subscriptions } from "@/db/schema";
+import { memberships, payments, standingOrders, subscriptions, users } from "@/db/schema";
 import { computeMonth, type MonthResult } from "@/lib/billing/compute";
-import { addMonths, assertMonth, currentMonth, type Month } from "@/lib/billing/month";
+import { addMonths, assertMonth, berlinDate, currentMonth, dueDateOf, type Month } from "@/lib/billing/month";
 import { generateReferenceId } from "@/lib/billing/reference";
 import { loadBillingInput } from "./billing-data";
 
@@ -72,45 +72,57 @@ export function ensureMonthPayments(db: Db, ownerId: number, month: Month, now: 
 export function ensureOwnerPayments(db: Db, ownerId: number, now: Date = new Date()): void {
   const first = firstBillingMonth(db, ownerId);
   const cur = currentMonth(now);
-  if (!first || first > cur) return;
-  let m = first;
-  for (let i = 0; i < MAX_CATCH_UP_MONTHS && m <= cur; i++, m = addMonths(m, 1)) ensureMonthPayments(db, ownerId, m, now);
+  if (first && first <= cur) {
+    let m = first;
+    for (let i = 0; i < MAX_CATCH_UP_MONTHS && m <= cur; i++, m = addMonths(m, 1)) ensureMonthPayments(db, ownerId, m, now);
+  }
+  applyStandingOrders(db, ownerId, now);
 }
 
 /**
- * Nach einer Änderung: Beträge der noch OFFENEN Zahlungen der Monate fromMonth..jetzt neu berechnen.
- * Referenz-IDs und Status bleiben; wer nichts mehr schuldet, verliert die offene Zahlung. Bezahlt gemeldete
- * oder bestätigte Zahlungen werden nie angefasst.
+ * Daueraufträge: Offene Zahlungen eines Zahlers mit Dauerauftrag werden ab dessen Startmonat am Fälligkeitstag des
+ * Monats automatisch BESTÄTIGT (Vermerk "auto"). Frühere Monate (Rückstand vor dem Startmonat) und noch nicht fällige
+ * Monate bleiben offen. Vom Empfänger zurückgesetzte Zahlungen ("skipped") werden nicht erneut automatisch bezahlt.
  */
-export function reconcileOpenPayments(db: Db, ownerId: number, fromMonth: Month, now: Date = new Date()): void {
-  const to = currentMonth(now);
-  if (fromMonth > to) return;
-  const input = loadBillingInput(db, ownerId);
-  const rows = db
-    .select()
-    .from(payments)
-    .where(and(eq(payments.recipientUserId, ownerId), gte(payments.month, fromMonth), lte(payments.month, to), eq(payments.status, "open")))
-    .all();
-  const results = new Map<string, MonthResult>();
-  for (const row of rows) {
-    const result = results.get(row.month) ?? computeMonth(row.month, input.subscriptions, input.participants, ownerId);
-    results.set(row.month, result);
-    const total = result.totals.find((t) => t.participantId === row.payerUserId);
-    if (!total || !total.payable) db.delete(payments).where(eq(payments.id, row.id)).run();
-    else if (total.totalCents !== row.amountCents) db.update(payments).set({ amountCents: total.totalCents }).where(eq(payments.id, row.id)).run();
+export function applyStandingOrders(db: Db, ownerId: number, now: Date = new Date()): void {
+  const orders = db.select().from(standingOrders).where(eq(standingOrders.recipientUserId, ownerId)).all();
+  if (orders.length === 0) return;
+  const owner = db.select({ dueDay: users.dueDay }).from(users).where(eq(users.id, ownerId)).get();
+  if (!owner) return;
+  const today = berlinDate(now);
+  const cur = currentMonth(now);
+  const ts = now.toISOString();
+  for (const o of orders) {
+    const rows = db
+      .select()
+      .from(payments)
+      .where(and(eq(payments.payerUserId, o.payerUserId), eq(payments.recipientUserId, ownerId), eq(payments.status, "open"), isNull(payments.standingOrderState), gte(payments.month, o.fromMonth), lte(payments.month, cur)))
+      .all();
+    for (const r of rows) {
+      if (dueDateOf(r.month, owner.dueDay) > today) continue; // Dauerauftrag läuft erst am Fälligkeitstag
+      db.update(payments).set({ status: "confirmed", markedPaidAt: ts, confirmedAt: ts, standingOrderState: "auto" }).where(eq(payments.id, r.id)).run();
+    }
   }
 }
 
-/** Früheste Monat, ab dem sich bei diesem Empfänger noch etwas ändern lässt (siehe manage.ts). */
-export function earliestChangeMonth(db: Db, ownerId: number, now: Date = new Date()): Month {
+/** Erster Monat, für den sich bestehende Preise, Gewichte und Beteiligungen ändern lassen: immer der Folgemonat. */
+export function nextChangeMonth(now: Date = new Date()): Month {
+  return addMonths(currentMonth(now), 1);
+}
+
+/** Gibt es für diesen Empfänger im Monat schon angelegte Zahlungen (egal in welchem Status)? */
+export function hasPaymentsForMonth(db: Db, ownerId: number, month: Month): boolean {
+  return !!db.select({ id: payments.id }).from(payments).where(and(eq(payments.recipientUserId, ownerId), eq(payments.month, month))).get();
+}
+
+/**
+ * Erster Monat, in dem ein NEUES Abo oder ein NEUER Mitzahler starten darf: der laufende Monat, solange dafür bei
+ * diesem Empfänger noch keine Zahlungen angelegt wurden (sonst würden bereits berechnete Beträge nicht mehr stimmen),
+ * sonst der Folgemonat.
+ */
+export function firstStartMonthForNew(db: Db, ownerId: number, now: Date = new Date()): Month {
   const cur = currentMonth(now);
-  const row = db
-    .select({ m: sql<string | null>`max(${payments.month})` })
-    .from(payments)
-    .where(and(eq(payments.recipientUserId, ownerId), ne(payments.status, "open")))
-    .get();
-  const last = row?.m ?? null;
-  return last !== null && last >= cur ? addMonths(last, 1) : cur;
+  return hasPaymentsForMonth(db, ownerId, cur) ? addMonths(cur, 1) : cur;
 }
 
 export type PaidResult = "ok" | "not_found" | "locked";
@@ -147,7 +159,13 @@ export function setStatusByOwner(db: Db, ownerId: number, paymentId: number, sta
   const ts = now.toISOString();
   db.transaction((tx) => {
     tx.update(payments)
-      .set({ status, markedPaidAt: status === "open" ? null : (row.markedPaidAt ?? ts), confirmedAt: status === "confirmed" ? ts : null })
+      .set({
+        status,
+        markedPaidAt: status === "open" ? null : (row.markedPaidAt ?? ts),
+        confirmedAt: status === "confirmed" ? ts : null,
+        // Vom Empfänger zurückgesetzt: nicht erneut automatisch per Dauerauftrag bestätigen
+        ...(status === "open" && row.standingOrderState === "auto" ? { standingOrderState: "skipped" as const } : {}),
+      })
       .where(eq(payments.id, paymentId))
       .run();
     if (status === "confirmed") {

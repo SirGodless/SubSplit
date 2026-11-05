@@ -108,21 +108,29 @@ docker compose up -d --build
 
 ## Regeln
 
+- **Der laufende Monat ist fest.** Alles, was der Empfänger an Bestehendem ändert (Preis, Gewicht, Beteiligung beenden,
+  Abo beenden), gilt **erst ab dem Folgemonat**. **Neue Abos und neue Mitzahler** dürfen im laufenden Monat starten, solange
+  für diesen Monat bei diesem Empfänger noch keine Zahlungen angelegt wurden (sie entstehen beim ersten Aufruf des
+  Monats); danach starten auch sie ab dem Folgemonat. Die Oberfläche zeigt die frühesten Monate an und füllt die
+  Formulare damit vor. Die Beträge schon angelegter Zahlungen ändern sich nie nachträglich.
 - **Rückstand:** Hat jemand einen Monat nicht bezahlt, wird der offene Betrag im nächsten Monat aufgeschlagen. Die
   Zahlungsseite zeigt den Gesamtbetrag (mit Aufschlüsselung der Vormonate) und die Referenz-ID der neuesten Zahlung;
   der Verwendungszweck enthält „inkl. Rückstand“. „Ich habe bezahlt“ gilt für alles Offene bei diesem Empfänger, und
   „Bestätigen“ der neuesten Zahlung bestätigt auch die früheren gemeldeten Monate. Die App legt die Zahlungen für alle
   Monate seit der ersten Beteiligung an, auch wenn in einem Monat niemand die App geöffnet hat.
-- **Austragen (durch den Mitzahler, bei jedem Abo):** Vor dem Fälligkeitstag des laufenden Monats und solange für ihn
-  noch nichts bezahlt gemeldet ist, gilt es **ab dem laufenden Monat** (der Monat entfällt). Nach dem Fälligkeitstag
-  oder bei schon gemeldeter Zahlung gilt es **ab dem Folgemonat**. Offene Rückstände bleiben bestehen.
-- **Änderungen durch den Empfänger** (Preis, Gewicht, Beteiligung) gelten ab einem Monat; vergangene Monate bleiben
-  unverändert. Im laufenden Monat ist alles änderbar, **solange noch keine Zahlung bei diesem Empfänger als „bezahlt“
-  gemeldet oder bestätigt ist**. Offene Zahlungen werden dann automatisch neu berechnet (Referenz-ID bleibt). Danach
-  gilt eine Änderung frühestens ab dem Folgemonat; die Oberfläche zeigt den frühesten Monat an.
-- **Abo beenden** (normaler Weg bei Kündigung): Beteiligungen enden nach dem gewählten Monat, das Abo wird archiviert
-  und lässt sich wieder aktivieren. **Abo löschen** geht nur, solange es in keiner abgelaufenen oder bezahlt gemeldeten
-  Abrechnung vorkommt.
+- **Austragen (durch den Mitzahler, bei jedem Abo)** gilt **immer ab dem Folgemonat**: Der laufende Monat bleibt zu
+  zahlen, ebenso Rückstände. Die Beträge der anderen im laufenden Monat ändern sich nicht.
+- **Dauerauftrag:** Zahler **und** Empfänger können pro Zahler einen Dauerauftrag einschalten (Vertrauensbasis, es wird
+  nichts geprüft). Beim Einschalten wählt man den Startmonat (laufender Monat oder später). Ab diesem Monat wird die
+  Zahlung am **Fälligkeitstag** automatisch **bestätigt** (in der Übersicht als „Per Dauerauftrag bestätigt“). Vor dem
+  Fälligkeitstag bleibt sie offen, ist aber für den Zahler nichts zu Überweisendes. Rückstände aus Monaten **vor** dem
+  Startmonat bleiben offen. Ausschalten wirkt ab dann; bereits automatisch bestätigte Monate bleiben bestätigt. Setzt der
+  Empfänger eine automatisch bestätigte Zahlung zurück, wird genau diese nicht erneut automatisch bestätigt. Ändert sich
+  der Monatsbetrag (Preiserhöhung), gilt die Zahlung weiterhin als bezahlt; eine Benachrichtigung dazu kommt erst mit den
+  E-Mails (Phase 2).
+- **Abo beenden** (normaler Weg bei Kündigung): Beteiligungen enden nach dem gewählten Monat (frühestens dem laufenden),
+  das Abo wird archiviert und lässt sich wieder aktivieren. **Abo löschen** geht nur, solange für das Abo noch keine
+  Zahlungen angelegt wurden.
 
 ## Konfiguration (nur Systemwerte in der `.env`)
 

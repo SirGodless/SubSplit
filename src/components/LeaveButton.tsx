@@ -4,22 +4,13 @@ import { useState } from "react";
 import { api } from "@/lib/client/api";
 import { formatMonth } from "@/lib/format";
 
-type Reason = "before_due" | "after_due" | "paid" | "locked";
-
-const HINT: Record<Reason, string> = {
-  before_due: "Der Fälligkeitstag ist noch nicht erreicht: Du zahlst den laufenden Monat nicht mehr.",
-  after_due: "Der Fälligkeitstag ist schon vorbei: Der laufende Monat bleibt zu zahlen.",
-  paid: "Für den laufenden Monat hast du schon bezahlt gemeldet: Er bleibt zu zahlen.",
-  locked: "Für den laufenden Monat gibt es beim Empfänger schon bezahlte Zahlungen: Es gilt erst ab dem Folgemonat.",
-};
-
-export default function LeaveButton({ id, name, effectiveMonth, reason }: { id: number; name: string; effectiveMonth: string; reason: Reason }) {
+export default function LeaveButton({ id, name, effectiveMonth }: { id: number; name: string; effectiveMonth: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function leave() {
-    if (!window.confirm(`Vom Abo „${name}“ abmelden?\n\nDu zahlst ab ${formatMonth(effectiveMonth)} nicht mehr dafür.\n${HINT[reason]}\nOffene Rückstände aus Vormonaten bleiben bestehen.`)) return;
+    if (!window.confirm(`Vom Abo „${name}“ abmelden?\n\nDu zahlst ab ${formatMonth(effectiveMonth)} nicht mehr dafür. Der laufende Monat bleibt zu zahlen, ebenso offene Rückstände aus Vormonaten.`)) return;
     setBusy(true);
     setError(null);
     try {

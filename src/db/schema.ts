@@ -112,6 +112,8 @@ export const payments = sqliteTable(
     status: text("status", { enum: ["open", "marked_paid", "confirmed"] }).notNull().default("open"),
     markedPaidAt: text("marked_paid_at"),
     confirmedAt: text("confirmed_at"),
+    /** null = vom Dauerauftrag nicht berührt; "auto" = per Dauerauftrag bestätigt; "skipped" = vom Empfänger zurückgesetzt, nicht erneut automatisch. */
+    standingOrderState: text("standing_order_state", { enum: ["auto", "skipped"] }),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [
@@ -120,6 +122,27 @@ export const payments = sqliteTable(
     index("payments_recipient_month_idx").on(t.recipientUserId, t.month),
     check("payments_amount_ck", sql`${t.amountCents} >= 0`),
     check("payments_not_self_ck", sql`${t.payerUserId} <> ${t.recipientUserId}`),
+  ],
+);
+
+/**
+ * Dauerauftrag: Zahler und Empfänger (jeder von beiden kann ihn setzen, Vertrauensbasis) geben an, dass die Zahlung per
+ * Dauerauftrag läuft. Ab `from_month` werden Zahlungen am Fälligkeitstag automatisch bestätigt. Zeile weg = aus.
+ */
+export const standingOrders = sqliteTable(
+  "standing_orders",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    payerUserId: integer("payer_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    recipientUserId: integer("recipient_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    fromMonth: text("from_month").notNull(),
+    createdByUserId: integer("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex("standing_orders_pair_uq").on(t.payerUserId, t.recipientUserId),
+    check("standing_orders_month_ck", sql`${t.fromMonth} LIKE ${sql.raw(MONTH_RE)}`),
+    check("standing_orders_not_self_ck", sql`${t.payerUserId} <> ${t.recipientUserId}`),
   ],
 );
 

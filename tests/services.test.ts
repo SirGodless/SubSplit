@@ -4,10 +4,10 @@ import { openDatabase, runMigrations, type Db } from "@/db/client";
 import { memberships, payments, subscriptionPrices, subscriptions, users } from "@/db/schema";
 import { AppError } from "@/lib/services/errors";
 import {
-  createSubscription, deleteSubscription, earliestChangeMonth, endMembership, endSubscription, reactivateSubscription, renameSubscription,
+  createSubscription, deleteSubscription, endMembership, endSubscription, reactivateSubscription, renameSubscription,
   setMembership, setPrice,
 } from "@/lib/services/manage";
-import { ensureMonthPayments, ensureOwnerPayments, setPaidByPayer, setStatusByOwner } from "@/lib/services/payments";
+import { ensureMonthPayments, ensureOwnerPayments, firstStartMonthForNew, nextChangeMonth, setPaidByPayer, setStatusByOwner } from "@/lib/services/payments";
 import { createUser, updateRecipient } from "@/lib/services/users";
 import { getHome, getOperatorAccounts, getOwnerOverview, getPayerView, leaveSubscription, planLeave, volumeClassOf } from "@/lib/services/views";
 
@@ -47,7 +47,7 @@ describe("Mandantentrennung: ein Konto kann nichts von einem anderen lesen oder 
       () => endMembership(db, other, { subscriptionId: netflix, userId: anna, lastMonth: M }, NOW),
       () => endSubscription(db, other, netflix, M, NOW),
       () => reactivateSubscription(db, other, netflix),
-      () => deleteSubscription(db, other, netflix, NOW),
+      () => deleteSubscription(db, other, netflix),
     ];
     for (const c of calls) expect(c).toThrow(/Abo nicht gefunden/);
     // unverändert
@@ -78,62 +78,82 @@ describe("Mandantentrennung: ein Konto kann nichts von einem anderen lesen oder 
   });
 });
 
-describe("Empfänger trägt sich selbst ein und Änderungsregeln", () => {
-  it("der Empfänger kann Mitglied sein; die anderen zahlen weniger; er schuldet sich nichts", () => {
+describe("Änderungsregeln: der laufende Monat ist fest", () => {
+  const DEC = "2026-12";
+  it("Hilfsfunktionen: Folgemonat, und neuer Start im laufenden Monat nur solange noch keine Zahlungen angelegt sind", () => {
+    expect(nextChangeMonth(NOW)).toBe(DEC);
+    expect(firstStartMonthForNew(db, boss, NOW)).toBe(M);
     ensureOwnerPayments(db, boss, NOW);
-    expect(payOf(anna, boss)!.amountCents).toBe(900 + 900);
+    expect(firstStartMonthForNew(db, boss, NOW)).toBe(DEC);
+    expect(firstStartMonthForNew(db, other, NOW)).toBe(M); // anderer Empfänger unberührt
+  });
+  it("Bestehendes (Preis, Gewicht, Beenden) gilt immer erst ab dem Folgemonat, auch ohne angelegte Zahlungen", () => {
+    expect(() => setPrice(db, boss, spotify, M, 1500, NOW)).toThrow(/ab dem Folgemonat \(2026-12\)/);
+    expect(() => join(boss, netflix, anna, 3, M)).toThrow(/ab dem Folgemonat/); // Gewicht von Anna ändern
+    expect(() => endMembership(db, boss, { subscriptionId: netflix, userId: bob, lastMonth: "2026-10" }, NOW)).toThrow(/ab dem Folgemonat/);
+    expect(() => endSubscription(db, boss, spotify, "2026-10", NOW)).toThrow(/ab dem Folgemonat/);
+    setPrice(db, boss, spotify, DEC, 1500, NOW);
+    join(boss, netflix, anna, 3, DEC);
+    endMembership(db, boss, { subscriptionId: netflix, userId: bob, lastMonth: M }, NOW); // wirkt ab Dezember
+  });
+  it("der laufende Monat bleibt bei allen Änderungen unverändert (keine Neuberechnung)", () => {
+    ensureOwnerPayments(db, boss, NOW);
+    const before = payOf(anna, boss)!;
+    setPrice(db, boss, spotify, DEC, 5000, NOW);
+    join(boss, netflix, cleo, 1, DEC);
+    expect(payOf(anna, boss)).toMatchObject({ amountCents: before.amountCents, referenceId: before.referenceId });
+    const dec = new Date("2026-12-02T10:00:00Z");
+    ensureOwnerPayments(db, boss, dec);
+    expect(payOf(anna, boss, DEC)!.amountCents).toBe(600 + 5000); // Netflix durch 3, Spotify jetzt 5000 (Anna allein)
+  });
+  it("neue Mitzahler und neue Abos dürfen im laufenden Monat starten, solange noch keine Zahlungen angelegt sind", () => {
+    join(boss, netflix, cleo, 1, M); // Cleo ist neu in Netflix, Monat noch nicht abgerechnet
+    expect(createSubscription(db, boss, { name: "Neu", priceCents: 300, validFromMonth: M }, NOW)).toBeGreaterThan(0);
+    ensureOwnerPayments(db, boss, NOW);
+    expect(payOf(cleo, boss)!.amountCents).toBe(600); // Netflix 1800 durch Anna, Bob und Cleo
+  });
+  it("sobald Zahlungen angelegt sind, starten Neue frühestens im Folgemonat", () => {
+    ensureOwnerPayments(db, boss, NOW);
+    expect(() => join(boss, netflix, cleo, 1, M)).toThrow(/frühestens ab 2026-12 \(für den laufenden Monat sind schon Zahlungen angelegt\)/);
+    expect(() => createSubscription(db, boss, { name: "Neu", priceCents: 300, validFromMonth: M }, NOW)).toThrow(/frühestens ab 2026-12/);
+    join(boss, netflix, cleo, 1, DEC);
+    createSubscription(db, boss, { name: "Neu", priceCents: 300, validFromMonth: DEC }, NOW);
+  });
+  it("ein vergangener Startmonat ist nie erlaubt", () => {
+    expect(() => join(boss, netflix, cleo, 1, "2026-10")).toThrow(/frühestens/);
+    expect(() => createSubscription(db, boss, { name: "Alt", priceCents: 300, validFromMonth: "2026-10" }, NOW)).toThrow(/frühestens/);
+  });
+  it("der Empfänger kann selbst Mitglied sein (neu: im laufenden Monat, solange nichts angelegt ist); er schuldet sich nichts", () => {
     join(boss, netflix, boss);
+    ensureOwnerPayments(db, boss, NOW);
     expect(payOf(anna, boss)!.amountCents).toBe(600 + 900);
     expect(payOf(bob, boss)!.amountCents).toBe(600);
     expect(db.select().from(payments).all().some((p) => p.payerUserId === boss)).toBe(false);
   });
-  it("nach einer gemeldeten Zahlung ist der Monat gesperrt, ab Folgemonat geht es", () => {
-    ensureOwnerPayments(db, boss, NOW);
-    setPaidByPayer(db, bob, boss, true, NOW);
-    expect(earliestChangeMonth(db, boss, NOW)).toBe("2026-12");
-    expect(() => join(boss, netflix, cleo)).toThrow(/frühestens ab 2026-12/);
-    join(boss, netflix, cleo, 1, "2026-12");
-    expect(payOf(anna, boss)!.amountCents).toBe(1800); // eingefroren
-  });
-  it("die Sperre eines Empfängers betrifft einen anderen nicht", () => {
-    ensureOwnerPayments(db, boss, NOW);
-    setPaidByPayer(db, bob, boss, true, NOW);
-    expect(earliestChangeMonth(db, other, NOW)).toBe(M);
-  });
   it("ohne IBAN und PayPal kann man kein Abo anlegen", () => {
     expect(() => createSubscription(db, anna, { name: "X", priceCents: 100, validFromMonth: M }, NOW)).toThrow(/IBAN oder PayPal/);
-  });
-  it("Preisänderung rechnet offene Zahlungen neu, Referenz-ID bleibt", () => {
-    ensureOwnerPayments(db, boss, NOW);
-    const ref = payOf(anna, boss)!.referenceId;
-    setPrice(db, boss, spotify, M, 1500, NOW);
-    expect(payOf(anna, boss)!.amountCents).toBe(900 + 1500);
-    expect(payOf(anna, boss)!.referenceId).toBe(ref);
   });
 });
 
 describe("Abo beenden, wieder aktivieren, löschen", () => {
-  it("Beenden: Beteiligungen enden, archiviert, Änderungen gesperrt, Vergangenheit bleibt", () => {
+  const DEC = "2026-12";
+  it("Beenden: Beteiligungen enden nach dem Monat, archiviert, Änderungen gesperrt, Vergangenheit und laufender Monat bleiben", () => {
     ensureOwnerPayments(db, boss, NOW);
-    setPaidByPayer(db, anna, boss, true, NOW);
-    endSubscription(db, boss, spotify, M, NOW);
+    endSubscription(db, boss, spotify, M, NOW); // letzter Monat = aktueller Monat -> wirkt ab Dezember
     expect(db.select().from(subscriptions).where(eq(subscriptions.id, spotify)).get()!.archivedAt).not.toBeNull();
-    expect(() => setPrice(db, boss, spotify, "2026-12", 100, NOW)).toThrow(/beendet/);
-    expect(() => join(boss, spotify, bob, 1, "2026-12")).toThrow(/beendet/);
+    expect(() => setPrice(db, boss, spotify, DEC, 100, NOW)).toThrow(/beendet/);
+    expect(() => join(boss, spotify, bob, 1, DEC)).toThrow(/beendet/);
     const dec = new Date("2026-12-02T10:00:00Z");
     expect(getPayerView(db, anna, boss, M, dec)!.subscriptions.map((s) => s.name).sort()).toEqual(["Netflix", "Spotify"]);
-    expect(getPayerView(db, anna, boss, "2026-12", dec)!.subscriptions.map((s) => s.name)).toEqual(["Netflix"]);
+    expect(getPayerView(db, anna, boss, DEC, dec)!.subscriptions.map((s) => s.name)).toEqual(["Netflix"]);
     reactivateSubscription(db, boss, spotify);
-    join(boss, spotify, bob, 1, "2026-12");
+    join(boss, spotify, bob, 1, DEC);
   });
-  it("Löschen: erlaubt, solange nur Offenes existiert; gesperrt nach gemeldeter Zahlung oder abgelaufenem Monat", () => {
-    ensureOwnerPayments(db, boss, NOW);
-    deleteSubscription(db, boss, spotify, NOW);
+  it("Löschen: nur solange noch keine Zahlungen für das Abo angelegt wurden", () => {
+    deleteSubscription(db, boss, spotify);
     expect(db.select().from(subscriptions).where(eq(subscriptions.id, spotify)).all()).toHaveLength(0);
-    expect(payOf(anna, boss)!.amountCents).toBe(900);
-    setPaidByPayer(db, anna, boss, true, NOW);
-    expect(() => deleteSubscription(db, boss, netflix, NOW)).toThrow(/stattdessen beenden/);
-    expect(() => deleteSubscription(db, boss, netflix, new Date("2026-12-02T10:00:00Z"))).toThrow(/abgerechnet/);
+    ensureOwnerPayments(db, boss, NOW);
+    expect(() => deleteSubscription(db, boss, netflix)).toThrow(/stattdessen beenden/);
   });
 });
 
@@ -188,36 +208,26 @@ describe("Rückstand: Vergessenes wird auf den nächsten Monat aufgeschlagen", (
   });
 });
 
-describe("Austragen durch den Teilnehmer", () => {
-  it("nach dem Fälligkeitstag gilt es ab dem Folgemonat; der laufende Monat bleibt zu zahlen", () => {
-    ensureOwnerPayments(db, boss, NOW); // Fälligkeit am 1., heute ist der 4.
-    expect(planLeave(db, bob, netflix, NOW)).toEqual({ effectiveMonth: "2026-12", reason: "after_due" });
-    expect(leaveSubscription(db, bob, netflix, NOW).effectiveMonth).toBe("2026-12");
+describe("Austragen durch den Teilnehmer: gilt immer ab dem Folgemonat", () => {
+  it("der laufende Monat bleibt zu zahlen und für die anderen unverändert, ab dem Folgemonat ist die Person nicht mehr dabei", () => {
+    ensureOwnerPayments(db, boss, NOW);
+    const annaBefore = payOf(anna, boss)!.amountCents;
+    expect(planLeave(db, netflix, NOW)).toEqual({ effectiveMonth: "2026-12" });
+    expect(leaveSubscription(db, bob, netflix, NOW)).toEqual({ effectiveMonth: "2026-12" });
     expect(payOf(bob, boss)!.amountCents).toBe(900); // November bleibt
+    expect(payOf(anna, boss)!.amountCents).toBe(annaBefore); // Annas Betrag im laufenden Monat ändert sich nicht
     const dec = new Date("2026-12-02T10:00:00Z");
+    expect(getPayerView(db, bob, boss, M, dec)!.subscriptions.map((s) => s.name)).toEqual(["Netflix"]);
     expect(getPayerView(db, bob, boss, "2026-12", dec)?.subscriptions ?? []).toEqual([]);
+    expect(getPayerView(db, anna, boss, "2026-12", dec)!.subscriptions.find((s) => s.name === "Netflix")!.lines.map((l) => l.displayName)).toEqual(["Anna"]);
     expect(() => leaveSubscription(db, bob, netflix, NOW)).toThrow(/bereits ausgetragen/);
   });
-  it("vor dem Fälligkeitstag und ohne Zahlung gilt es sofort: der laufende Monat entfällt", () => {
-    updateRecipient(db, boss, { dueDay: 10 });
-    ensureOwnerPayments(db, boss, NOW);
-    expect(payOf(bob, boss)).toBeDefined();
-    expect(leaveSubscription(db, bob, netflix, NOW)).toEqual({ effectiveMonth: M, reason: "before_due" });
-    expect(payOf(bob, boss)).toBeUndefined();
-    expect(payOf(anna, boss)!.amountCents).toBe(1800 + 900); // Anna trägt Netflix jetzt allein (1800) plus Spotify (900)
-  });
-  it("vor dem Fälligkeitstag, aber der laufende Monat ist schon bezahlt gemeldet: ab Folgemonat", () => {
-    updateRecipient(db, boss, { dueDay: 10 });
+  it("es spielt keine Rolle, ob der Fälligkeitstag schon vorbei ist oder ob schon bezahlt gemeldet wurde", () => {
+    updateRecipient(db, boss, { dueDay: 10 }); // Fälligkeitstag noch nicht erreicht (heute ist der 4.)
     ensureOwnerPayments(db, boss, NOW);
     setPaidByPayer(db, bob, boss, true, NOW);
-    expect(leaveSubscription(db, bob, netflix, NOW)).toEqual({ effectiveMonth: "2026-12", reason: "paid" });
-    expect(payOf(bob, boss)!.status).toBe("marked_paid"); // der laufende Monat bleibt
-  });
-  it("ist der Monat beim Empfänger gesperrt (jemand anderes hat bezahlt gemeldet), gilt frühestens der Folgemonat", () => {
-    updateRecipient(db, boss, { dueDay: 10 });
-    ensureOwnerPayments(db, boss, NOW);
-    setPaidByPayer(db, anna, boss, true, NOW);
-    expect(planLeave(db, bob, netflix, NOW)).toEqual({ effectiveMonth: "2026-12", reason: "locked" });
+    expect(leaveSubscription(db, bob, netflix, NOW)).toEqual({ effectiveMonth: "2026-12" });
+    expect(payOf(bob, boss)).toMatchObject({ status: "marked_paid", amountCents: 900 });
   });
   it("Rückstand aus Vormonaten bleibt nach dem Austragen bestehen", () => {
     const sub = db.insert(subscriptions).values({ ownerUserId: other, name: "Cloud" }).returning().get();
@@ -225,7 +235,7 @@ describe("Austragen durch den Teilnehmer", () => {
     db.insert(memberships).values({ subscriptionId: sub.id, userId: cleo, weight: 1, validFromMonth: "2026-10" }).run();
     ensureOwnerPayments(db, other, NOW);
     leaveSubscription(db, cleo, sub.id, NOW);
-    expect(getHome(db, cleo, NOW)!.totalOutstandingCents).toBe(2000); // Oktober + November (nach Fälligkeit)
+    expect(getHome(db, cleo, NOW)!.totalOutstandingCents).toBe(2000); // Oktober + November
   });
   it("wer nicht beteiligt ist, kann nichts austragen", () => {
     expect(() => leaveSubscription(db, cleo, netflix, NOW)).toThrow(/nicht beteiligt/);
@@ -271,7 +281,7 @@ describe("Zahlungsansicht: Sichtbarkeit", () => {
     const json = JSON.stringify(v);
     for (const secret of ["geheim", "@example.org", "email", "passwordHash", "username"]) expect(json.toLowerCase()).not.toContain(secret.toLowerCase());
     expect(json).not.toContain(payOf(anna, boss)!.referenceId); // fremde Referenz-ID
-    expect(Object.keys(v).sort()).toEqual(["dueDate", "month", "months", "outstanding", "payment", "recipient", "recipientPay", "reportedCents", "subscriptions", "totalCents"]);
+    expect(Object.keys(v).sort()).toEqual(["dueDate", "expected", "month", "months", "outstanding", "payment", "recipient", "recipientPay", "reportedCents", "standingOrder", "subscriptions", "totalCents"]);
   });
 });
 

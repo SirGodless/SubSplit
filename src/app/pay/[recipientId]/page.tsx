@@ -3,6 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import CopyButton from "@/components/CopyButton";
 import PayActions from "@/components/PayActions";
+import StandingOrderPanel from "@/components/StandingOrderPanel";
+import { addMonths, currentMonth } from "@/lib/billing/month";
 import { formatDate, formatEuro, formatMonth, formatPercent } from "@/lib/format";
 import { buildPaymentLinks } from "@/lib/pay/links";
 import { getPageUser } from "@/lib/server/auth";
@@ -49,6 +51,8 @@ export default async function PayPage({ params, searchParams }: { params: Promis
             <p className="muted" style={{ margin: 0 }}>fällig am {formatDate(view.dueDate)}</p>
           ) : view.reportedCents > 0 ? (
             <p style={{ margin: 0 }}><span className="chip chip--marked_paid">Als bezahlt gemeldet</span> <span className="muted">{formatEuro(view.reportedCents)} warten auf Bestätigung</span></p>
+          ) : view.expected.totalCents > 0 ? (
+            <p style={{ margin: 0 }}><span className="chip chip--confirmed">Dauerauftrag</span> <span className="muted">{formatEuro(view.expected.totalCents)} werden am Fälligkeitstag ({formatDate(view.dueDate)}) automatisch als bezahlt geführt</span></p>
           ) : (
             <p className="muted" style={{ margin: 0 }}>Aktuell ist nichts offen.</p>
           )}
@@ -121,6 +125,11 @@ export default async function PayPage({ params, searchParams }: { params: Promis
         {!links && o.totalCents > 0 && (
           <section className="section"><p className="notice">{view.recipient.displayName} hat noch keine Zahlungsdaten hinterlegt. Bitte kurz nachfragen.</p></section>
         )}
+
+        <section className="section" aria-labelledby="so-h">
+          <h2 className="h" id="so-h" style={{ marginBottom: 12 }}>Dauerauftrag</h2>
+          <StandingOrderPanel payerId={auth.user.id} recipientId={view.recipient.id} active={view.standingOrder?.fromMonth ?? null} thisMonth={currentMonth()} nextMonth={addMonths(currentMonth(), 1)} />
+        </section>
 
         <section className="section" aria-labelledby="split-h">
           <h2 className="h" id="split-h">So setzt sich {formatMonth(view.month)} zusammen</h2>

@@ -1,10 +1,11 @@
 import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "@/db/client";
-import { memberships, payments, subscriptionPrices, subscriptions, users } from "@/db/schema";
+import { memberships, payments, standingOrders, subscriptionPrices, subscriptions, users } from "@/db/schema";
 import { addMonths, assertMonth, berlinDate, currentMonth, dueDateOf, type Month } from "@/lib/billing/month";
 import { AppError } from "./errors";
-import { endMembershipFrom, earliestChangeMonth } from "./manage";
-import { computeOwnerMonth, ensureOwnerPayments, firstBillingMonth, type PaymentStatus } from "./payments";
+import { endMembershipFrom } from "./manage";
+import { getStandingOrder } from "./standing-orders";
+import { computeOwnerMonth, ensureOwnerPayments, firstBillingMonth, firstStartMonthForNew, nextChangeMonth, type PaymentStatus } from "./payments";
 
 /** Wie viele Monate der Verlauf der Empfänger-Übersicht zeigt. */
 export const HISTORY_MONTHS = 12;
@@ -14,53 +15,31 @@ export const HISTORY_MONTHS = 12;
 // =====================================================================================
 
 export interface LeavePlan {
-  /** Erster Monat, für den die Person NICHT mehr zahlt. */
+  /** Erster Monat, für den die Person NICHT mehr zahlt: immer der Folgemonat. */
   effectiveMonth: Month;
-  reason: "before_due" | "after_due" | "paid" | "locked";
 }
 
 /**
- * Ab wann gilt ein Austragen? Vor dem Fälligkeitstag des laufenden Monats und solange dafür noch nichts bezahlt
- * (gemeldet/bestätigt) ist: ab dem laufenden Monat. Sonst ab dem Folgemonat. Hat bei diesem Empfänger schon
- * jemand für den Monat bezahlt gemeldet (Monat gesperrt), gilt frühestens der Folgemonat.
+ * Austragen gilt immer ab dem Folgemonat: Der laufende Monat bleibt zu zahlen, die Beträge der anderen im
+ * laufenden Monat ändern sich nicht. Rückstände aus Vormonaten bleiben bestehen.
  */
-export function planLeave(db: Db, userId: number, subscriptionId: number, now: Date = new Date()): LeavePlan {
-  const sub = db.select().from(subscriptions).where(eq(subscriptions.id, subscriptionId)).get();
-  if (!sub) throw new AppError("not_found", "Abo nicht gefunden.");
-  const owner = db.select({ dueDay: users.dueDay }).from(users).where(eq(users.id, sub.ownerUserId)).get();
-  if (!owner) throw new AppError("not_found", "Abo nicht gefunden.");
-  const cur = currentMonth(now);
-  const beforeDue = berlinDate(now) < dueDateOf(cur, owner.dueDay);
-  const paidCurrent = !!db
-    .select({ id: payments.id })
-    .from(payments)
-    .where(and(eq(payments.payerUserId, userId), eq(payments.recipientUserId, sub.ownerUserId), eq(payments.month, cur), or(eq(payments.status, "marked_paid"), eq(payments.status, "confirmed"))))
-    .get();
-  let effective: Month = beforeDue && !paidCurrent ? cur : addMonths(cur, 1);
-  let reason: LeavePlan["reason"] = beforeDue ? (paidCurrent ? "paid" : "before_due") : "after_due";
-  const earliest = earliestChangeMonth(db, sub.ownerUserId, now);
-  if (earliest > effective) {
-    effective = earliest;
-    reason = "locked";
-  }
-  return { effectiveMonth: effective, reason };
+export function planLeave(db: Db, subscriptionId: number, now: Date = new Date()): LeavePlan {
+  if (!db.select({ id: subscriptions.id }).from(subscriptions).where(eq(subscriptions.id, subscriptionId)).get()) throw new AppError("not_found", "Abo nicht gefunden.");
+  return { effectiveMonth: addMonths(currentMonth(now), 1) };
 }
 
-/** Trägt den Benutzer aus dem Abo aus (Wirkung siehe planLeave). Rückstände aus Vormonaten bleiben bestehen. */
+/** Trägt den Benutzer aus dem Abo aus (Wirkung siehe planLeave). */
 export function leaveSubscription(db: Db, userId: number, subscriptionId: number, now: Date = new Date()): LeavePlan {
-  const sub = db.select().from(subscriptions).where(eq(subscriptions.id, subscriptionId)).get();
-  const mine = sub
-    ? db.select({ id: memberships.id }).from(memberships).where(and(eq(memberships.subscriptionId, subscriptionId), eq(memberships.userId, userId))).get()
-    : undefined;
-  if (!sub || !mine) throw new AppError("not_found", "Du bist an diesem Abo nicht beteiligt.");
-  const plan = planLeave(db, userId, subscriptionId, now);
+  const mine = db.select({ id: memberships.id }).from(memberships).where(and(eq(memberships.subscriptionId, subscriptionId), eq(memberships.userId, userId))).get();
+  if (!mine) throw new AppError("not_found", "Du bist an diesem Abo nicht beteiligt.");
+  const plan = planLeave(db, subscriptionId, now);
   const stillIn = db
     .select({ id: memberships.id })
     .from(memberships)
     .where(and(eq(memberships.subscriptionId, subscriptionId), eq(memberships.userId, userId), or(isNull(memberships.validToMonth), gt(memberships.validToMonth, addMonths(plan.effectiveMonth, -1)))))
     .get();
   if (!stillIn) throw new AppError("invalid", "Du bist bereits ausgetragen.");
-  endMembershipFrom(db, sub.ownerUserId, subscriptionId, userId, addMonths(plan.effectiveMonth, -1), now);
+  endMembershipFrom(db, subscriptionId, userId, addMonths(plan.effectiveMonth, -1), now);
   return plan;
 }
 
@@ -76,6 +55,9 @@ export interface HomePayment {
   arrearsCents: number;
   /** Bezahlt gemeldet, noch nicht bestätigt. */
   reportedCents: number;
+  /** Per Dauerauftrag erwartet: wird am Fälligkeitstag automatisch bestätigt, nichts zu überweisen. */
+  expectedCents: number;
+  standingOrder: boolean;
   months: Array<{ month: Month; amountCents: number; status: PaymentStatus }>;
   dueDate: string;
 }
@@ -123,11 +105,18 @@ export function getHome(db: Db, userId: number, now: Date = new Date()): HomeVie
     .where(and(eq(payments.payerUserId, userId), lte(payments.month, cur), inArray(payments.status, ["open", "marked_paid"])))
     .orderBy(payments.month)
     .all();
+  const orders = new Map(db.select().from(standingOrders).where(eq(standingOrders.payerUserId, userId)).all().map((o) => [o.recipientUserId, o.fromMonth]));
   const byRecipient = new Map<number, HomePayment>();
   for (const r of rows) {
+    const so = orders.get(r.p.recipientUserId);
     const h = byRecipient.get(r.p.recipientUserId) ?? {
-      recipientId: r.p.recipientUserId, recipientName: r.recipientName, outstandingCents: 0, arrearsCents: 0, reportedCents: 0, months: [], dueDate: dueDateOf(cur, r.dueDay),
+      recipientId: r.p.recipientUserId, recipientName: r.recipientName, outstandingCents: 0, arrearsCents: 0, reportedCents: 0, expectedCents: 0, standingOrder: so !== undefined, months: [], dueDate: dueDateOf(cur, r.dueDay),
     };
+    byRecipient.set(r.p.recipientUserId, h);
+    if (r.p.status === "open" && so !== undefined && r.p.month >= so) {
+      h.expectedCents += r.p.amountCents; // deckt der Dauerauftrag ab
+      continue;
+    }
     h.months.push({ month: r.p.month, amountCents: r.p.amountCents, status: r.p.status });
     if (r.p.status === "open") {
       h.outstandingCents += r.p.amountCents;
@@ -141,7 +130,7 @@ export function getHome(db: Db, userId: number, now: Date = new Date()): HomeVie
     .map((m) => ({
       id: m.id, name: m.name, ownerName: m.ownerName, weight: m.weight, from: m.from, to: m.to,
       state: (m.from > cur ? "upcoming" : m.to !== null ? "ending" : "active") as HomeSubscription["state"],
-      leave: m.to === null || m.to >= cur ? planLeave(db, userId, m.id, now) : null,
+      leave: m.to === null || m.to >= cur ? planLeave(db, m.id, now) : null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name, "de"));
 
@@ -183,6 +172,10 @@ export interface PayerView {
     hasArrears: boolean;
   };
   reportedCents: number;
+  /** Dauerauftrag zwischen diesem Zahler und dem Empfänger (null = aus). Beide Seiten dürfen ihn setzen. */
+  standingOrder: { fromMonth: Month } | null;
+  /** Vom Dauerauftrag abgedeckt: nichts zu überweisen, wird am Fälligkeitstag automatisch bestätigt. */
+  expected: { totalCents: number; items: Array<{ month: Month; amountCents: number }> };
   payment: { referenceId: string; status: PaymentStatus; amountCents: number } | null;
   subscriptions: Array<{
     name: string;
@@ -225,7 +218,11 @@ export function getPayerView(db: Db, payerId: number, recipientId: number, reque
       lines: s.lines.map((l) => ({ displayName: names.get(l.participantId) ?? "?", weight: l.weight, percent: l.percent, amountCents: l.amountCents, isYou: l.participantId === payerId })),
     }));
 
-  const open = own.filter((p) => p.status === "open");
+  const so = getStandingOrder(db, payerId, recipientId);
+  const covered = (p: { month: string }) => !!so && p.month >= so.fromMonth;
+  const openAll = own.filter((p) => p.status === "open");
+  const open = openAll.filter((p) => !covered(p));
+  const expected = openAll.filter(covered);
   const newest = open[open.length - 1];
   const thisMonth = own.find((p) => p.month === month);
   return {
@@ -243,6 +240,8 @@ export function getPayerView(db: Db, payerId: number, recipientId: number, reque
       hasArrears: open.some((p) => p.month < cur),
     },
     reportedCents: own.filter((p) => p.status === "marked_paid").reduce((s, p) => s + p.amountCents, 0),
+    standingOrder: so,
+    expected: { totalCents: expected.reduce((s, p) => s + p.amountCents, 0), items: expected.map((p) => ({ month: p.month, amountCents: p.amountCents })) },
     payment: thisMonth ? { referenceId: thisMonth.referenceId, status: thisMonth.status, amountCents: thisMonth.amountCents } : null,
     subscriptions: subs,
   };
@@ -266,7 +265,13 @@ export interface OwnerMonthTotals {
 export interface OwnerOverview {
   month: Month;
   totals: OwnerMonthTotals;
-  payments: Array<{ paymentId: number; payerId: number; payerName: string; referenceId: string; amountCents: number; status: PaymentStatus; arrearsCents: number }>;
+  payments: Array<{
+    paymentId: number; payerId: number; payerName: string; referenceId: string; amountCents: number; status: PaymentStatus; arrearsCents: number;
+    /** Dauerauftrag dieses Zahlers (Startmonat) bzw. null. */
+    standingOrder: Month | null;
+    /** Diese Zahlung wurde automatisch per Dauerauftrag bestätigt. */
+    viaStandingOrder: boolean;
+  }>;
   subscriptions: Array<{ subscriptionId: number; name: string; priceCents: number; restCents: number }>;
   history: Array<OwnerMonthTotals & { month: Month }>;
 }
@@ -313,6 +318,7 @@ export function getOwnerOverview(db: Db, ownerId: number, requestedMonth?: strin
   const arrears = new Map<number, number>();
   for (const o of older) arrears.set(o.payer, (arrears.get(o.payer) ?? 0) + o.amount);
 
+  const ownerOrders = new Map(db.select().from(standingOrders).where(eq(standingOrders.recipientUserId, ownerId)).all().map((o) => [o.payerUserId, o.fromMonth]));
   const first = firstBillingMonth(db, ownerId);
   const history: OwnerOverview["history"] = [];
   for (let i = HISTORY_MONTHS - 1; i >= 0; i--) {
@@ -327,6 +333,8 @@ export function getOwnerOverview(db: Db, ownerId: number, requestedMonth?: strin
     payments: rows.map((r) => ({
       paymentId: r.p.id, payerId: r.p.payerUserId, payerName: r.payerName, referenceId: r.p.referenceId, amountCents: r.p.amountCents, status: r.p.status,
       arrearsCents: r.p.status === "open" ? (arrears.get(r.p.payerUserId) ?? 0) : 0,
+      standingOrder: ownerOrders.get(r.p.payerUserId) ?? null,
+      viaStandingOrder: r.p.standingOrderState === "auto",
     })),
     subscriptions: result.subscriptions.map((s) => ({ subscriptionId: s.subscriptionId, name: s.name, priceCents: s.priceCents, restCents: s.restCents })),
     history,
@@ -391,7 +399,10 @@ export function getOperatorAccounts(db: Db, cfg: { thresholdCents: number; facto
 export interface ManageData {
   /** Darf Abos anlegen (IBAN oder PayPal.Me hinterlegt). */
   canOwn: boolean;
-  earliestChangeMonth: Month;
+  /** Frühester Monat für Änderungen an Bestehendem (immer der Folgemonat). */
+  nextMonth: Month;
+  /** Frühester Monat für ein neues Abo oder einen neuen Mitzahler (laufender Monat, solange noch keine Zahlungen angelegt sind). */
+  newStartMonth: Month;
   subscriptions: Array<{ id: number; name: string; archivedAt: string | null }>;
   prices: Array<{ subscriptionId: number; validFromMonth: Month; amountCents: number }>;
   memberships: Array<{ subscriptionId: number; userId: number; displayName: string; weight: number; validFromMonth: Month; validToMonth: Month | null }>;
@@ -411,7 +422,8 @@ export function getManageData(db: Db, user: { id: number; iban: string | null; p
     : [];
   return {
     canOwn: !!(user.iban || user.paypalMe),
-    earliestChangeMonth: earliestChangeMonth(db, user.id, now),
+    nextMonth: nextChangeMonth(now),
+    newStartMonth: firstStartMonthForNew(db, user.id, now),
     subscriptions: subs,
     prices: prices.map((p) => ({ subscriptionId: p.subscriptionId, validFromMonth: p.validFromMonth, amountCents: p.amountCents })),
     memberships: ms.map((r) => ({ subscriptionId: r.m.subscriptionId, userId: r.m.userId, displayName: r.displayName, weight: r.m.weight, validFromMonth: r.m.validFromMonth, validToMonth: r.m.validToMonth })),

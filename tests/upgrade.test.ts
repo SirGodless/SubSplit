@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { openDatabase, runMigrations } from "@/db/client";
-import { invitations, memberships, payments, subscriptionPrices, subscriptions, users } from "@/db/schema";
+import { invitations, memberships, payments, standingOrders, subscriptionPrices, subscriptions, users } from "@/db/schema";
 
 // Stand der ersten Mehrbenutzer-Version (nur Migration 0000). Schützt davor, dass eine neue Migration Daten vernichtet.
 const V1 = "./tests/fixtures/drizzle-v1";
@@ -14,11 +14,13 @@ describe("Upgrade einer bestehenden verschlüsselten Datenbank auf die aktuelle 
     const path = join(mkdtempSync(join(tmpdir(), "upg-")), "t.db");
     let h = openDatabase(path, KEY);
     runMigrations(h, V1);
-    const [a, b] = h.db.insert(users).values([{ username: "anna", displayName: "Anna", passwordHash: "x" }, { username: "bob", displayName: "Bob", passwordHash: "y" }]).returning().all();
-    const [s] = h.db.insert(subscriptions).values({ ownerUserId: a!.id, name: "Netflix" }).returning().all();
-    h.db.insert(subscriptionPrices).values({ subscriptionId: s!.id, validFromMonth: "2026-11", amountCents: 1999 }).run();
-    h.db.insert(memberships).values({ subscriptionId: s!.id, userId: b!.id, weight: 1, validFromMonth: "2026-11" }).run();
-    h.db.insert(payments).values({ payerUserId: b!.id, recipientUserId: a!.id, month: "2026-11", referenceId: "K7M2QX", amountCents: 1000 }).run();
+    // Daten im alten Stand mit reinem SQL einfügen (das aktuelle Schema kennt Spalten, die es damals nicht gab)
+    const q = h.sqlite;
+    q.prepare("INSERT INTO users (id, username, display_name, password_hash) VALUES (1, 'anna', 'Anna', 'x'), (2, 'bob', 'Bob', 'y')").run();
+    q.prepare("INSERT INTO subscriptions (id, owner_user_id, name) VALUES (1, 1, 'Netflix')").run();
+    q.prepare("INSERT INTO subscription_prices (subscription_id, valid_from_month, amount_cents) VALUES (1, '2026-11', 1999)").run();
+    q.prepare("INSERT INTO memberships (subscription_id, user_id, weight, valid_from_month) VALUES (1, 2, 1, '2026-11')").run();
+    q.prepare("INSERT INTO payments (payer_user_id, recipient_user_id, month, reference_id, amount_cents) VALUES (2, 1, '2026-11', 'K7M2QX', 1000)").run();
     expect(() => h.db.select().from(invitations).all()).toThrow(/no such table/); // im alten Stand noch nicht da
     h.sqlite.close();
 
@@ -30,6 +32,8 @@ describe("Upgrade einer bestehenden verschlüsselten Datenbank auf die aktuelle 
     expect(h.db.select().from(memberships).all()).toHaveLength(1);
     expect(h.db.select().from(payments).all()[0]).toMatchObject({ referenceId: "K7M2QX", amountCents: 1000 });
     expect(h.db.select().from(invitations).all()).toEqual([]);
+    expect(h.db.select().from(standingOrders).all()).toEqual([]);
+    expect(h.db.select().from(payments).all()[0]).toMatchObject({ standingOrderState: null }); // neue Spalte, bestehende Zeilen unberührt
 
     runMigrations(h, "./drizzle");
     expect(h.db.select().from(users).all()).toHaveLength(2);

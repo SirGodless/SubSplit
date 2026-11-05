@@ -62,7 +62,7 @@ export default function ManageApp({ selfId }: { selfId: number }) {
                 <button className="btn btn--small" disabled={month >= thisMonth} onClick={() => setMonth(addMonths(month, 1))} aria-label="Nächster Monat">›</button>
                 <span className="label" style={{ marginLeft: "auto" }}>Fällig am {formatDate(`${month}-${String(dueDay).padStart(2, "0")}`)}</span>
               </div>
-              {overview && <OverviewBody overview={overview} reload={() => void loadOverview()} guard={guard} />}
+              {overview && <OverviewBody overview={overview} reload={() => void loadOverview()} guard={guard} selfId={selfId} thisMonth={thisMonth} />}
             </>
           )}
         </section>
@@ -76,9 +76,10 @@ export default function ManageApp({ selfId }: { selfId: number }) {
   );
 }
 
-function OverviewBody({ overview, reload, guard }: { overview: OwnerOverview; reload: () => void; guard: (fn: () => Promise<void>, ok?: string) => Promise<boolean> }) {
+function OverviewBody({ overview, reload, guard, selfId, thisMonth }: { overview: OwnerOverview; reload: () => void; guard: (fn: () => Promise<void>, ok?: string) => Promise<boolean>; selfId: number; thisMonth: string }) {
   const t = overview.totals;
   const setStatus = (id: number, status: string) => void guard(async () => { await api(`/api/manage/payments/${id}/status`, "POST", { status }); reload(); });
+  const setOrder = (payerId: number, on: boolean) => void guard(async () => { await api("/api/standing-orders", "POST", { payerUserId: payerId, recipientUserId: selfId, fromMonth: on ? thisMonth : null }); reload(); }, on ? "Dauerauftrag eingeschaltet." : "Dauerauftrag ausgeschaltet.");
   return (
     <>
       <div className="stats">
@@ -96,14 +97,15 @@ function OverviewBody({ overview, reload, guard }: { overview: OwnerOverview; re
             {overview.payments.length === 0 && <tr><td colSpan={5} className="muted">Keine Monatszahlungen in diesem Monat.</td></tr>}
             {overview.payments.map((p) => (
               <tr key={p.paymentId}>
-                <td>{p.payerName}{p.arrearsCents > 0 && <div className="accent" style={{ fontSize: 12 }}>+ {formatEuro(p.arrearsCents)} Rückstand</div>}</td>
+                <td>{p.payerName}{p.arrearsCents > 0 && <div className="accent" style={{ fontSize: 12 }}>+ {formatEuro(p.arrearsCents)} Rückstand</div>}{p.standingOrder && <div className="muted" style={{ fontSize: 12 }}>Dauerauftrag ab {p.standingOrder}</div>}</td>
                 <td className="mono">{p.referenceId}</td>
                 <td className="mono" style={{ textAlign: "right" }}>{formatEuro(p.amountCents)}</td>
-                <td><span className={`chip chip--${p.status}`}>{STATUS_LABEL[p.status]}</span></td>
+                <td><span className={`chip chip--${p.status}`}>{p.viaStandingOrder ? "Per Dauerauftrag bestätigt" : STATUS_LABEL[p.status]}</span></td>
                 <td>
                   <div className="actions">
                     {p.status !== "confirmed" && <button className="btn btn--small btn--primary" onClick={() => setStatus(p.paymentId, "confirmed")}>Bestätigen</button>}
                     {p.status !== "open" && <button className="btn btn--small" onClick={() => setStatus(p.paymentId, "open")}>Zurücksetzen</button>}
+                    <button className="btn btn--small" onClick={() => setOrder(p.payerId, !p.standingOrder)}>{p.standingOrder ? "Dauerauftrag aus" : "Dauerauftrag an"}</button>
                   </div>
                 </td>
               </tr>
@@ -149,16 +151,20 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
   data: ManageData; directory: DirUser[]; thisMonth: string; selfId: number;
   onSubmit: (fn: () => Promise<unknown>, ok: string) => Promise<boolean>; onRefresh: () => void;
 }) {
-  const earliest = data.earliestChangeMonth;
+  const nextMonth = data.nextMonth;
+  const newStart = data.newStartMonth;
   const [showArchived, setShowArchived] = useState(false);
   // null = Liste, "new" = Formular für neues Abo, Zahl = Verwaltung dieses Abos
   const [view, setView] = useState<number | "new" | null>(null);
   const [person, setPerson] = useState("");
   const [weight, setWeight] = useState("1");
   const [filter, setFilter] = useState("");
-  const lockNote = earliest > thisMonth ? (
-    <p className="notice" style={{ marginBottom: 16 }}>Für {thisMonth} gibt es bereits als bezahlt gemeldete oder bestätigte Zahlungen. Änderungen gelten frühestens ab <b>{earliest}</b>.</p>
-  ) : null;
+  const infoNote = (
+    <p className="notice" style={{ marginBottom: 16 }}>
+      Änderungen an Bestehendem (Preis, Gewicht, Beenden) gelten erst ab dem Folgemonat (<b>{nextMonth}</b>), der laufende Monat bleibt fest.
+      Neue Abos und neue Mitzahler können ab <b>{newStart}</b> starten{newStart > thisMonth ? " (für den laufenden Monat sind schon Zahlungen angelegt)" : ""}.
+    </p>
+  );
 
   const pricesOf = (id: number) => data.prices.filter((p) => p.subscriptionId === id).sort((a, b) => b.validFromMonth.localeCompare(a.validFromMonth));
   const priceNow = (id: number) => pricesOf(id).find((p) => p.validFromMonth <= thisMonth)?.amountCents ?? null;
@@ -169,7 +175,7 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
     return c;
   };
   const monthField = (name: string, def: string, label: string) => (
-    <label className="f"><span className="label">{label}</span><input name={name} defaultValue={def} pattern="\d{4}-(0[1-9]|1[0-2])" placeholder="JJJJ-MM" required /></label>
+    <label className="f"><span className="label">{label}</span><input key={`${name}-${def}`} name={name} defaultValue={def} pattern="\d{4}-(0[1-9]|1[0-2])" placeholder="JJJJ-MM" required /></label>
   );
   const submit = (fn: (f: FormData) => Promise<unknown>, ok: string, after?: () => void) => (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -183,14 +189,14 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
       <section className="section" style={{ borderTop: 0 }}>
         <button className="btn btn--small" onClick={() => { setView(null); onRefresh(); }}>‹ Alle Abos</button>
         <h2 className="h" style={{ margin: "20px 0 14px" }}>Neues Abo</h2>
-        {lockNote}
+        {infoNote}
         {!data.canOwn && <p className="notice" style={{ marginBottom: 16 }}>Bitte zuerst in den <Link href="/settings" style={{ textDecoration: "underline" }}>Einstellungen</Link> mindestens IBAN oder PayPal.Me eintragen.</p>}
         <form className="stack" style={{ maxWidth: 420 }} onSubmit={submit(
           async (f) => api("/api/manage/subscriptions", "POST", { name: f.get("name"), priceCents: euro(f.get("price")), validFromMonth: f.get("from") }),
           "Abo angelegt.", () => setView(null))}>
           <label className="f"><span className="label">Name</span><input name="name" required maxLength={60} autoFocus /></label>
           <label className="f"><span className="label">Preis pro Monat (EUR)</span><input name="price" inputMode="decimal" required placeholder="12,99" /></label>
-          {monthField("from", earliest, "Gültig ab (Monat)")}
+          {monthField("from", newStart, "Gültig ab (Monat)")}
           <button className="btn btn--primary" disabled={!data.canOwn}>Abo anlegen</button>
         </form>
       </section>
@@ -214,6 +220,8 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
     const q = filter.trim().toLowerCase();
     const shown = rowsFor.filter((r) => !q || r.u.displayName.toLowerCase().includes(q) || r.u.username.includes(q));
     const now = priceNow(sub.id);
+    const personIsActive = data.memberships.some((m) => m.subscriptionId === sub.id && String(m.userId) === person && m.validFromMonth <= thisMonth && (m.validToMonth === null || m.validToMonth >= thisMonth));
+    const fromDefault = personIsActive ? nextMonth : newStart;
     return (
       <section className="section" style={{ borderTop: 0 }}>
         <button className="btn btn--small" onClick={() => { setView(null); onRefresh(); }}>‹ Alle Abos</button>
@@ -222,7 +230,7 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
           <span className="mono">{now === null ? "kein Preis" : formatEuro(now)} <span className="muted">/ Monat</span></span>
         </header>
 
-        {lockNote && <div style={{ marginTop: 16 }}>{lockNote}</div>}
+        <div style={{ marginTop: 16 }}>{infoNote}</div>
         {sub.archivedAt && (
           <div className="notice" style={{ marginTop: 16 }}>
             <p style={{ margin: "0 0 10px" }}>Dieses Abo ist beendet. Vergangene Monate bleiben unverändert. Zum Ändern zuerst wieder aktivieren.</p>
@@ -242,7 +250,7 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
           {!sub.archivedAt && <form className="grid2 grid2--stack" style={{ alignItems: "end" }} onSubmit={submit(
             async (f) => api(`/api/manage/subscriptions/${sub.id}/prices`, "POST", { validFromMonth: f.get("from"), priceCents: euro(f.get("price")) }), "Preis gespeichert.")}>
             <label className="f"><span className="label">Neuer Preis (EUR)</span><input name="price" inputMode="decimal" required placeholder="14,99" /></label>
-            {monthField("from", earliest, "Gültig ab (Monat)")}
+            {monthField("from", nextMonth, "Gültig ab (Monat)")}
             <button className="btn">Preis ändern</button>
           </form>}
         </div>
@@ -273,14 +281,14 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
                   </select></label>
                 <label className="f"><span className="label">Gewicht (1 = gleicher Anteil)</span>
                   <input type="number" min={1} max={1000} value={weight} onChange={(e) => setWeight(e.target.value)} required /></label>
-                {monthField("from", earliest, "Ab Monat")}
+                {monthField("from", fromDefault, "Ab Monat")}
                 <button className="btn btn--primary">Speichern</button>
               </form>
               <form className="stack" onSubmit={submit(
                 async (f) => api("/api/manage/memberships/end", "POST", { subscriptionId: sub.id, userId: Number(person), lastMonth: f.get("last") }), "Beteiligung beendet.")}>
                 <h4 className="h">Beteiligung beenden</h4>
                 <p className="muted" style={{ margin: 0, fontSize: 14 }}>Gilt für das links gewählte Konto. Du kannst auch eine Zeile oben anklicken.</p>
-                {monthField("last", addMonths(earliest, -1), "Letzter Monat der Beteiligung")}
+                {monthField("last", thisMonth, "Letzter Monat der Beteiligung")}
                 <button className="btn" disabled={!person}>Beenden</button>
               </form>
             </div>
@@ -293,7 +301,7 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
             <p className="muted" style={{ fontSize: 14 }}>Alle Beteiligungen enden nach dem gewählten Monat, das Abo wandert ins Archiv. Vergangene Monate bleiben unverändert. Das ist der normale Weg, wenn ein Abo gekündigt wird.</p>
             <form className="stack" style={{ maxWidth: 420 }} onSubmit={submit(
               async (f) => api(`/api/manage/subscriptions/${sub.id}/end`, "POST", { lastMonth: f.get("last") }), "Abo beendet.", () => setView(null))}>
-              {monthField("last", addMonths(earliest, -1), "Letzter Monat des Abos")}
+              {monthField("last", thisMonth, "Letzter Monat des Abos")}
               <button className="btn">Abo beenden</button>
             </form>
           </div>
@@ -301,7 +309,7 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
 
         <div className="section">
           <h3 className="h accent">Abo löschen</h3>
-          <p className="muted" style={{ fontSize: 14 }}>Entfernt das Abo mit Preisen und Beteiligungen endgültig. Nur möglich, solange es noch in keiner bezahlten oder abgelaufenen Abrechnung vorkommt, sonst bitte beenden. Noch offene Zahlungen des laufenden Monats werden neu berechnet.</p>
+          <p className="muted" style={{ fontSize: 14 }}>Entfernt das Abo mit Preisen und Beteiligungen endgültig. Nur möglich, solange für das Abo noch keine Zahlungen angelegt wurden, sonst bitte beenden.</p>
           <button className="btn" style={{ borderColor: "var(--accent-text)", color: "var(--accent-text)" }} onClick={() => {
             if (window.confirm(`„${sub.name}“ wirklich endgültig löschen?`)) void onSubmit(() => api(`/api/manage/subscriptions/${sub.id}`, "DELETE"), "Abo gelöscht.").then((ok) => { if (ok) setView(null); });
           }}>Abo löschen</button>
