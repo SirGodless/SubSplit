@@ -8,7 +8,8 @@ import { formatDueDate, formatEuro, formatMonth, parseEuro, STATUS_LABEL } from 
 type Status = "open" | "marked_paid" | "confirmed";
 interface PaymentRow { paymentId: number; participantId: number; displayName: string; email: string | null; referenceId: string; amountCents: number; status: Status }
 interface Overview { month: string; payments: PaymentRow[]; ownerShareCents: number; totals: { open: number; markedPaid: number; confirmed: number }; subscriptions: Array<{ subscriptionId: number; name: string; priceCents: number; restCents: number }> }
-interface Sub { id: number; name: string }
+interface Sub { id: number; name: string; archivedAt: string | null }
+interface SubsData { subscriptions: Sub[]; prices: Price[]; memberships: Membership[]; earliestChangeMonth: string }
 interface Price { subscriptionId: number; validFromMonth: string; amountCents: number }
 interface Membership { subscriptionId: number; participantId: number; weight: number; validFromMonth: string; validToMonth: string | null }
 interface Person { id: number; displayName: string; email: string | null; isOwner: boolean; tokenRevokedAt: string | null }
@@ -23,7 +24,7 @@ export default function AdminApp({ dueDay }: { dueDay: number }) {
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [month, setMonth] = useState(thisMonth);
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [subs, setSubs] = useState<{ subscriptions: Sub[]; prices: Price[]; memberships: Membership[] } | null>(null);
+  const [subs, setSubs] = useState<SubsData | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [newLink, setNewLink] = useState<{ name: string; link: string } | null>(null);
 
@@ -78,7 +79,7 @@ export default function AdminApp({ dueDay }: { dueDay: number }) {
     <main className="shell shell--wide" style={{ paddingTop: 0 }}>
       <nav className="tabs" role="tablist" aria-label="Bereiche">
         {([["overview", "Übersicht"], ["subs", "Abos"], ["people", "Teilnehmer"]] as const).map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} onClick={() => { setTab(id); setMsg(null); }}>{label}</button>
+          <button key={id} role="tab" aria-selected={tab === id} onClick={() => { setTab(id); setMsg(null); if (id === "overview") loadOverview(); if (id === "subs") { loadSubs(); loadPeople(); } if (id === "people") loadPeople(); }}>{label}</button>
         ))}
         <span style={{ flex: 1 }} />
         <button onClick={logout}>Abmelden</button>
@@ -136,7 +137,7 @@ export default function AdminApp({ dueDay }: { dueDay: number }) {
       )}
 
       {tab === "subs" && subs && (
-        <SubsTab subs={subs} people={people} thisMonth={thisMonth} personName={personName}
+        <SubsTab subs={subs} people={people} thisMonth={thisMonth} personName={personName} onRefresh={() => { loadSubs(); loadPeople(); }}
           onSubmit={(fn, ok) => guard(async () => { await fn(call); await loadSubs(); await loadOverview(); }, ok)} />
       )}
 
@@ -197,10 +198,15 @@ export default function AdminApp({ dueDay }: { dueDay: number }) {
 
 type Call = (path: string, method?: string, body?: unknown) => Promise<unknown>;
 
-function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
-  subs: { subscriptions: Sub[]; prices: Price[]; memberships: Membership[] }; people: Person[]; thisMonth: string;
-  personName: (id: number) => string; onSubmit: (fn: (call: Call) => Promise<unknown>, ok: string) => Promise<boolean>;
+function SubsTab({ subs, people, thisMonth, personName, onSubmit, onRefresh }: {
+  subs: SubsData; people: Person[]; thisMonth: string;
+  personName: (id: number) => string; onSubmit: (fn: (call: Call) => Promise<unknown>, ok: string) => Promise<boolean>; onRefresh: () => void;
 }) {
+  const earliest = subs.earliestChangeMonth;
+  const [showArchived, setShowArchived] = useState(false);
+  const lockNote = earliest > thisMonth ? (
+    <p className="notice" style={{ marginBottom: 16 }}>Für {thisMonth} gibt es bereits als bezahlt gemeldete oder bestätigte Zahlungen. Änderungen gelten frühestens ab <b>{earliest}</b>.</p>
+  ) : null;
   // null = Liste, "new" = Formular für neues Abo, Zahl = Verwaltung dieses Abos
   const [view, setView] = useState<number | "new" | null>(null);
   const [person, setPerson] = useState<string>("");
@@ -228,14 +234,15 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
   if (view === "new") {
     return (
       <section className="section" style={{ borderTop: 0 }}>
-        <button className="btn btn--small" onClick={() => setView(null)}>‹ Alle Abos</button>
+        <button className="btn btn--small" onClick={() => { setView(null); onRefresh(); }}>‹ Alle Abos</button>
         <h2 className="h" style={{ margin: "20px 0 14px" }}>Neues Abo</h2>
+        {lockNote}
         <form className="stack" style={{ maxWidth: 420 }} onSubmit={submit(
           async (f, call) => call("/api/admin/subscriptions", "POST", { name: f.get("name"), priceCents: euro(f.get("price")), validFromMonth: f.get("from") }),
           "Abo angelegt.", () => setView(null))}>
           <label className="f"><span className="label">Name</span><input name="name" required maxLength={60} autoFocus /></label>
           <label className="f"><span className="label">Preis pro Monat (EUR)</span><input name="price" inputMode="decimal" required placeholder="12,99" /></label>
-          {monthField("from", thisMonth, "Gültig ab (Monat)")}
+          {monthField("from", earliest, "Gültig ab (Monat)")}
           <button className="btn btn--primary">Abo anlegen</button>
         </form>
       </section>
@@ -259,11 +266,19 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
     const now = priceNow(sub.id);
     return (
       <section className="section" style={{ borderTop: 0 }}>
-        <button className="btn btn--small" onClick={() => setView(null)}>‹ Alle Abos</button>
+        <button className="btn btn--small" onClick={() => { setView(null); onRefresh(); }}>‹ Alle Abos</button>
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, margin: "20px 0 4px", flexWrap: "wrap" }}>
-          <h2 style={{ margin: 0, fontSize: 26 }}>{sub.name}</h2>
+          <h2 style={{ margin: 0, fontSize: 26 }}>{sub.name}{sub.archivedAt && <span className="chip chip--open" style={{ marginLeft: 12, verticalAlign: "middle" }}>Beendet</span>}</h2>
           <span className="mono">{now === null ? "kein Preis" : formatEuro(now)} <span className="muted">/ Monat</span></span>
         </header>
+
+        {lockNote && <div style={{ marginTop: 16 }}>{lockNote}</div>}
+        {sub.archivedAt && (
+          <div className="notice" style={{ marginTop: 16 }}>
+            <p style={{ margin: "0 0 10px" }}>Dieses Abo ist beendet. Vergangene Monate bleiben unverändert. Zum Ändern zuerst wieder aktivieren.</p>
+            <button className="btn btn--small" onClick={() => void onSubmit((call) => call(`/api/admin/subscriptions/${sub.id}/reactivate`, "POST"), "Abo wieder aktiviert.")}>Wieder aktivieren</button>
+          </div>
+        )}
 
         <div className="section">
           <h3 className="h">Preis</h3>
@@ -274,12 +289,12 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
               </div>
             ))}
           </div>
-          <form className="grid2 grid2--stack" style={{ alignItems: "end" }} onSubmit={submit(
+          {!sub.archivedAt && <form className="grid2 grid2--stack" style={{ alignItems: "end" }} onSubmit={submit(
             async (f, call) => call(`/api/admin/subscriptions/${sub.id}/prices`, "POST", { validFromMonth: f.get("from"), priceCents: euro(f.get("price")) }), "Preis gespeichert.")}>
             <label className="f"><span className="label">Neuer Preis (EUR)</span><input name="price" inputMode="decimal" required placeholder="14,99" /></label>
-            {monthField("from", thisMonth, "Gültig ab (Monat)")}
+            {monthField("from", earliest, "Gültig ab (Monat)")}
             <button className="btn">Preis ändern</button>
-          </form>
+          </form>}
         </div>
 
         <div className="section">
@@ -296,7 +311,7 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
               ))}
             </div>
           )}
-          {people.length > 0 && (
+          {people.length > 0 && !sub.archivedAt && (
             <div className="grid2 grid2--stack" style={{ gap: 28 }}>
               <form className="stack" onSubmit={submit(
                 async (f, call) => call("/api/admin/memberships", "PUT", { subscriptionId: sub.id, participantId: Number(person), weight: Number(weight), from: f.get("from") }), "Beteiligung gespeichert.")}>
@@ -308,18 +323,38 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
                   </select></label>
                 <label className="f"><span className="label">Gewicht (1 = gleicher Anteil)</span>
                   <input type="number" min={1} max={1000} value={weight} onChange={(e) => setWeight(e.target.value)} required /></label>
-                {monthField("from", thisMonth, "Ab Monat")}
+                {monthField("from", earliest, "Ab Monat")}
                 <button className="btn btn--primary">Speichern</button>
               </form>
               <form className="stack" onSubmit={submit(
                 async (f, call) => call("/api/admin/memberships/end", "POST", { subscriptionId: sub.id, participantId: Number(person), lastMonth: f.get("last") }), "Beteiligung beendet.")}>
                 <h4 className="h">Beteiligung beenden</h4>
                 <p className="muted" style={{ margin: 0, fontSize: 14 }}>Gilt für den links gewählten Teilnehmer. Du kannst auch eine Zeile oben anklicken.</p>
-                {monthField("last", thisMonth, "Letzter Monat der Beteiligung")}
+                {monthField("last", addMonths(earliest, -1), "Letzter Monat der Beteiligung")}
                 <button className="btn" disabled={!person}>Beenden</button>
               </form>
             </div>
           )}
+        </div>
+
+        {!sub.archivedAt && (
+          <div className="section">
+            <h3 className="h">Abo beenden</h3>
+            <p className="muted" style={{ fontSize: 14 }}>Alle Beteiligungen enden nach dem gewählten Monat, das Abo wandert ins Archiv. Vergangene Monate bleiben unverändert. Das ist der normale Weg, wenn ein Abo gekündigt wird.</p>
+            <form className="stack" style={{ maxWidth: 420 }} onSubmit={submit(
+              async (f, call) => call(`/api/admin/subscriptions/${sub.id}/end`, "POST", { lastMonth: f.get("last") }), "Abo beendet.", () => setView(null))}>
+              {monthField("last", addMonths(earliest, -1), "Letzter Monat des Abos")}
+              <button className="btn">Abo beenden</button>
+            </form>
+          </div>
+        )}
+
+        <div className="section">
+          <h3 className="h accent">Abo löschen</h3>
+          <p className="muted" style={{ fontSize: 14 }}>Entfernt das Abo mit Preisen und Beteiligungen endgültig. Nur möglich, solange es noch in keiner bezahlten oder abgelaufenen Abrechnung vorkommt, sonst bitte beenden. Noch offene Zahlungen des laufenden Monats werden neu berechnet.</p>
+          <button className="btn" style={{ borderColor: "var(--accent-text)", color: "var(--accent-text)" }} onClick={() => {
+            if (window.confirm(`„${sub.name}“ wirklich endgültig löschen?`)) void onSubmit((call) => call(`/api/admin/subscriptions/${sub.id}`, "DELETE"), "Abo gelöscht.").then((ok) => { if (ok) setView(null); });
+          }}>Abo löschen</button>
         </div>
       </section>
     );
@@ -334,15 +369,20 @@ function SubsTab({ subs, people, thisMonth, personName, onSubmit }: {
       </div>
       {subs.subscriptions.length === 0 ? <p className="muted">Noch keine Abos angelegt.</p> : (
         <div className="rows">
-          {subs.subscriptions.map((s) => (
-            <button key={s.id} type="button" className="listbtn listbtn--sub" onClick={() => { setView(s.id); setPerson(""); setWeight("1"); }}>
-              <span style={{ fontWeight: 700, fontSize: 18 }}>{s.name}</span>
+          {subs.subscriptions.filter((s) => showArchived || !s.archivedAt).map((s) => (
+            <button key={s.id} type="button" className="listbtn listbtn--sub" onClick={() => { setView(s.id); setPerson(""); setWeight("1"); onRefresh(); }}>
+              <span style={{ fontWeight: 700, fontSize: 18 }}>{s.name}{s.archivedAt && <span className="chip chip--open" style={{ marginLeft: 10 }}>Beendet</span>}</span>
               <span className="muted mono">{activeCount(s.id)} {activeCount(s.id) === 1 ? "Beteiligter" : "Beteiligte"}</span>
               <span className="mono">{priceNow(s.id) === null ? "–" : formatEuro(priceNow(s.id)!)}<span className="muted"> / Monat</span></span>
               <span aria-hidden="true" className="accent">›</span>
             </button>
           ))}
         </div>
+      )}
+      {subs.subscriptions.some((s) => s.archivedAt) && (
+        <button className="btn btn--small" style={{ marginTop: 18 }} onClick={() => setShowArchived(!showArchived)}>
+          {showArchived ? "Beendete Abos ausblenden" : "Beendete Abos anzeigen"}
+        </button>
       )}
     </section>
   );

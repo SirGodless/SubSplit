@@ -38,8 +38,11 @@
 - Admin-CSRF: Cookie `SameSite=Strict` + Origin-Prüfung + Header `x-csrf-token` gegen Token in der Session.
 - Passwort-Hash: scrypt (N=65536, r=8, p=1), `npm run hash-password`.
 
-## Freigaben für Fälligkeit/Änderungen
-- Änderungen (Preis, Gewicht, Beteiligung) sind ab Monat M nur erlaubt, wenn M >= aktueller Monat und für Monate >= M noch keine Zahlungen erzeugt wurden. Dadurch bleiben erzeugte Zahlungen unverändert.
+## Regeln für Änderungen (überarbeitet)
+- Zuerst galt: Änderungen ab Monat M nur, wenn für Monate >= M noch keine Zahlungen erzeugt wurden. Das war im Betrieb zu streng, weil Zahlungen schon beim Öffnen der Übersicht entstehen; man konnte danach niemanden mehr hinzufügen (auch den Admin nicht).
+- Jetzt: Änderungen sind ab dem aktuellen Monat erlaubt, solange dort keine Zahlung als bezahlt gemeldet oder bestätigt ist (`earliestChangeMonth`). Offene Zahlungen der betroffenen Monate werden neu berechnet (`reconcileOpenPayments`): Betrag wird angepasst, Referenz-ID und Status bleiben, wer nichts mehr schuldet, verliert die offene Zahlung. Bezahlt gemeldete oder bestätigte Zahlungen werden nie angefasst. Vergangene Monate sind fest.
+- Risiko bewusst akzeptiert: Hat jemand schon überwiesen, aber noch nicht „bezahlt“ gemeldet, und der Betrag ändert sich danach, weicht die Überweisung vom neuen Betrag ab. Der Admin gleicht das über PayPal/Bank ab.
+- Abo **beenden** = archivieren (Beteiligungen enden nach dem gewählten Monat, wieder aktivierbar). Abo **löschen** nur, wenn es in keinem vergangenen Monat und in keiner bezahlt gemeldeten/bestätigten Zahlung vorkommen kann.
 
 ## Verifikation externer Formate (Stand dieser Session)
 - **PayPal.Me** (Recherche, PayPal-Hilfeseite): Name nur Buchstaben/Ziffern, max. 20 Zeichen, nicht case-sensitiv. Betrag steht am Linkende, Währung direkt dahinter (Beispiel der Hilfe: `PayPal.Me/DiaRusso/25AUD`). Dezimaltrenner und `EUR` sind **nicht** ausdrücklich belegt, die Domain `paypal.com/paypalme` statt `paypal.me` ebenfalls nicht. Die Doku-Seiten waren in der Session nicht abrufbar (Netzwerk-Allowlist).

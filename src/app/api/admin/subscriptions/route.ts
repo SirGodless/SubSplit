@@ -2,7 +2,7 @@ import { z } from "zod";
 import { memberships, subscriptionPrices, subscriptions } from "@/db/schema";
 import { ctx } from "@/lib/server/context";
 import { adminRoute } from "@/lib/server/http";
-import { createSubscription } from "@/lib/services/admin";
+import { createSubscription, earliestChangeMonth } from "@/lib/services/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,7 @@ export const GET = adminRoute(() => {
     subscriptions: db.select().from(subscriptions).all(),
     prices: db.select().from(subscriptionPrices).all(),
     memberships: db.select().from(memberships).all(),
+    earliestChangeMonth: earliestChangeMonth(db),
   };
 });
 

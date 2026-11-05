@@ -1,8 +1,9 @@
-import { and, eq, gte, lt, or, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, gte, lt, ne, or, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/db/client";
 import { memberships, participants, payments, subscriptionPrices, subscriptions } from "@/db/schema";
 import { addMonths, assertMonth, currentMonth, type Month } from "@/lib/billing/month";
 import { generateToken, hashToken } from "@/lib/security/tokens";
+import { reconcileOpenPayments } from "./payments";
 
 export class AdminError extends Error {
   constructor(public readonly code: "not_allowed" | "not_found" | "invalid", message: string) {
@@ -12,15 +13,30 @@ export class AdminError extends Error {
 }
 
 /**
- * Änderungen an Preis/Gewicht/Beteiligung gelten ab Monat M. Erlaubt nur, wenn M nicht in der
- * Vergangenheit liegt und für Monate >= M noch keine Zahlungen erzeugt wurden (sonst würden
- * bereits eingefrorene Beträge nicht mehr zur Berechnung passen).
+ * Früheste Monat, ab dem sich Preis/Gewicht/Beteiligung noch ändern lassen: der aktuelle Monat, solange
+ * dort keine Zahlung als bezahlt gemeldet oder bestätigt ist; sonst der Monat danach. Vergangene Monate sind fest.
+ * Noch OFFENE Zahlungen werden nach einer Änderung automatisch neu berechnet (siehe reconcileOpenPayments).
  */
+export function earliestChangeMonth(db: Db, now: Date = new Date()): Month {
+  const cur = currentMonth(now);
+  const row = db.select({ m: sql<string | null>`max(${payments.month})` }).from(payments).where(ne(payments.status, "open")).get();
+  const last = row?.m ?? null;
+  return last !== null && last >= cur ? addMonths(last, 1) : cur;
+}
+
 export function assertChangeAllowed(db: Db, effectiveFrom: Month, now: Date = new Date()): void {
   assertMonth(effectiveFrom);
-  if (effectiveFrom < currentMonth(now)) throw new AdminError("not_allowed", "Änderungen wirken nur ab dem aktuellen Monat.");
-  const row = db.select({ c: sql<number>`count(*)` }).from(payments).where(gte(payments.month, effectiveFrom)).get();
-  if ((row?.c ?? 0) > 0) throw new AdminError("not_allowed", `Für ${effectiveFrom} oder später existieren bereits Zahlungen – Änderung frühestens ab dem nächsten Monat.`);
+  const cur = currentMonth(now);
+  if (effectiveFrom < cur) throw new AdminError("not_allowed", "Änderungen wirken nur ab dem aktuellen Monat.");
+  const earliest = earliestChangeMonth(db, now);
+  if (effectiveFrom < earliest)
+    throw new AdminError("not_allowed", `Für ${effectiveFrom} gibt es bereits als bezahlt gemeldete oder bestätigte Zahlungen – Änderung frühestens ab ${earliest}.`);
+}
+
+function assertActive(db: Db, subscriptionId: number): void {
+  const s = db.select({ archivedAt: subscriptions.archivedAt }).from(subscriptions).where(eq(subscriptions.id, subscriptionId)).get();
+  if (!s) throw new AdminError("not_found", "Abo nicht gefunden.");
+  if (s.archivedAt) throw new AdminError("invalid", "Das Abo ist beendet. Bitte zuerst wieder aktivieren.");
 }
 
 const validCents = (c: number) => Number.isSafeInteger(c) && c >= 0 && c <= 10_000_000;
@@ -62,11 +78,14 @@ export function renameSubscription(db: Db, id: number, name: string): void {
 export function setPrice(db: Db, subscriptionId: number, validFromMonth: Month, priceCents: number, now = new Date()): void {
   if (!validCents(priceCents)) throw new AdminError("invalid", "Ungültiger Preis.");
   assertChangeAllowed(db, validFromMonth, now);
-  if (!db.select({ id: subscriptions.id }).from(subscriptions).where(eq(subscriptions.id, subscriptionId)).get()) throw new AdminError("not_found", "Abo nicht gefunden.");
-  db.insert(subscriptionPrices)
-    .values({ subscriptionId, validFromMonth, amountCents: priceCents })
-    .onConflictDoUpdate({ target: [subscriptionPrices.subscriptionId, subscriptionPrices.validFromMonth], set: { amountCents: priceCents } })
-    .run();
+  assertActive(db, subscriptionId);
+  db.transaction((tx) => {
+    tx.insert(subscriptionPrices)
+      .values({ subscriptionId, validFromMonth, amountCents: priceCents })
+      .onConflictDoUpdate({ target: [subscriptionPrices.subscriptionId, subscriptionPrices.validFromMonth], set: { amountCents: priceCents } })
+      .run();
+    reconcileOpenPayments(tx as unknown as Db, validFromMonth, now);
+  });
 }
 
 // ---------- Teilnehmer & Magic-Links ----------
@@ -138,9 +157,11 @@ export function setMembership(db: Db, input: { subscriptionId: number; participa
   if (!validWeight(input.weight)) throw new AdminError("invalid", "Gewicht muss eine ganze Zahl von 1 bis 1000 sein.");
   assertChangeAllowed(db, input.from, now);
   requireRefs(db, input.subscriptionId, input.participantId);
+  assertActive(db, input.subscriptionId);
   db.transaction((tx) => {
     clearFrom(tx as unknown as Db, input.subscriptionId, input.participantId, input.from);
     tx.insert(memberships).values({ subscriptionId: input.subscriptionId, participantId: input.participantId, weight: input.weight, validFromMonth: input.from }).run();
+    reconcileOpenPayments(tx as unknown as Db, input.from, now);
   });
 }
 
@@ -151,6 +172,59 @@ export function endMembership(db: Db, input: { subscriptionId: number; participa
   requireRefs(db, input.subscriptionId, input.participantId);
   db.transaction((tx) => {
     clearFrom(tx as unknown as Db, input.subscriptionId, input.participantId, addMonths(input.lastMonth, 1));
+    reconcileOpenPayments(tx as unknown as Db, addMonths(input.lastMonth, 1), now);
+  });
+}
+
+// ---------- Abo beenden / wieder aktivieren / löschen ----------
+
+/** Beendet das Abo nach `lastMonth`: alle Beteiligungen enden, das Abo wird archiviert. Vergangene Monate bleiben unverändert. */
+export function endSubscription(db: Db, id: number, lastMonth: Month, now = new Date()): void {
+  assertMonth(lastMonth);
+  const from = addMonths(lastMonth, 1);
+  assertChangeAllowed(db, from, now);
+  if (!db.select({ id: subscriptions.id }).from(subscriptions).where(eq(subscriptions.id, id)).get()) throw new AdminError("not_found", "Abo nicht gefunden.");
+  db.transaction((tx) => {
+    tx.delete(memberships).where(and(eq(memberships.subscriptionId, id), gt(memberships.validFromMonth, lastMonth))).run();
+    tx.update(memberships)
+      .set({ validToMonth: lastMonth })
+      .where(and(eq(memberships.subscriptionId, id), or(isNull(memberships.validToMonth), gt(memberships.validToMonth, lastMonth))))
+      .run();
+    tx.update(subscriptions).set({ archivedAt: now.toISOString() }).where(eq(subscriptions.id, id)).run();
+    reconcileOpenPayments(tx as unknown as Db, from, now);
+  });
+}
+
+export function reactivateSubscription(db: Db, id: number): void {
+  const res = db.update(subscriptions).set({ archivedAt: null }).where(eq(subscriptions.id, id)).run();
+  if (res.changes === 0) throw new AdminError("not_found", "Abo nicht gefunden.");
+}
+
+/**
+ * Endgültig löschen (mit Preisen und Beteiligungen). Nur, solange das Abo in keiner abgeschlossenen
+ * oder bezahlten Abrechnung vorkommt: In vergangenen Monaten oder bei bezahlt gemeldeten/bestätigten Zahlungen
+ * ab dem ersten Monat des Abos ist das nicht mehr möglich – dann stattdessen beenden.
+ */
+export function deleteSubscription(db: Db, id: number, now = new Date()): void {
+  if (!db.select({ id: subscriptions.id }).from(subscriptions).where(eq(subscriptions.id, id)).get()) throw new AdminError("not_found", "Abo nicht gefunden.");
+  const months = [
+    ...db.select({ m: subscriptionPrices.validFromMonth }).from(subscriptionPrices).where(eq(subscriptionPrices.subscriptionId, id)).all().map((r) => r.m),
+    ...db.select({ m: memberships.validFromMonth }).from(memberships).where(eq(memberships.subscriptionId, id)).all().map((r) => r.m),
+  ].sort();
+  const first = months[0];
+  const cur = currentMonth(now);
+  if (first !== undefined) {
+    const blocking = db
+      .select({ c: sql<number>`count(*)` })
+      .from(payments)
+      .where(and(gte(payments.month, first), or(lt(payments.month, cur), ne(payments.status, "open"))))
+      .get();
+    if ((blocking?.c ?? 0) > 0)
+      throw new AdminError("not_allowed", "Das Abo wurde bereits abgerechnet und kann nicht mehr gelöscht werden. Bitte stattdessen beenden.");
+  }
+  db.transaction((tx) => {
+    tx.delete(subscriptions).where(eq(subscriptions.id, id)).run();
+    reconcileOpenPayments(tx as unknown as Db, cur, now);
   });
 }
 

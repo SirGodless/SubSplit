@@ -106,8 +106,18 @@ describe("Sichtbarkeit für Teilnehmer", () => {
 });
 
 describe("Änderungsregeln", () => {
-  it("nach erzeugten Zahlungen sind Änderungen für diesen Monat gesperrt, ab nächstem Monat erlaubt", () => {
+  it("solange nur OFFENE Zahlungen existieren, sind Änderungen im laufenden Monat erlaubt und rechnen offene Zahlungen neu", () => {
     ensureMonthPayments(db, MONTH, NOW);
+    const before = db.select().from(payments).all().find((p) => p.participantId === ids.a)!;
+    setMembership(db, { subscriptionId: ids.netflix, participantId: ids.c, weight: 1, from: MONTH }, NOW);
+    const after = db.select().from(payments).all().find((p) => p.participantId === ids.a)!;
+    expect(after.referenceId).toBe(before.referenceId); // Referenz-ID bleibt
+    expect(after.amountCents).toBeLessThan(before.amountCents); // Netflix jetzt durch 4 statt 3
+    expect(getParticipantView(db, ids.a, MONTH, NOW)!.totalCents).toBe(after.amountCents);
+  });
+  it("ab der ersten als bezahlt gemeldeten Zahlung ist der Monat gesperrt, der Folgemonat bleibt änderbar", () => {
+    ensureMonthPayments(db, MONTH, NOW);
+    setPaidByParticipant(db, ids.a, MONTH, true, NOW);
     expect(() => setMembership(db, { subscriptionId: ids.netflix, participantId: ids.c, weight: 1, from: MONTH }, NOW)).toThrow(AdminError);
     expect(() => setPrice(db, ids.netflix, "2026-10", 100, NOW)).toThrow(AdminError);
     setMembership(db, { subscriptionId: ids.netflix, participantId: ids.c, weight: 1, from: "2026-12" }, NOW);

@@ -71,9 +71,17 @@ Der Port 3000 ist nur im Docker-Netzwerk erreichbar und nicht auf dem Host verö
 3. **Abos:** Abo mit Preis und Startmonat anlegen, dann Beteiligungen mit Gewicht (1 = gleicher Anteil) setzen.
 4. **Übersicht:** pro Monat siehst du, wer offen ist, wer „bezahlt“ gemeldet hat, und kannst bestätigen.
 
-Regeln für Änderungen: Preis, Gewicht und Beteiligung gelten **ab einem Monat**. Sobald für einen Monat
-Zahlungen erzeugt wurden (beim ersten Aufruf des Monats), sind Änderungen für diesen Monat gesperrt, damit
-eingefrorene Beträge nicht nachträglich von der Berechnung abweichen. Änderungen wirken dann ab dem nächsten Monat.
+Regeln für Änderungen: Preis, Gewicht und Beteiligung gelten **ab einem Monat**; vergangene Monate bleiben unverändert.
+
+- Im **laufenden Monat** lässt sich alles ändern, **solange noch keine Zahlung dieses Monats als „bezahlt“ gemeldet
+  oder bestätigt ist**. Noch offene Zahlungen werden dabei automatisch neu berechnet (Referenz-ID und Status bleiben,
+  nur der Betrag ändert sich). Teile Teilnehmern also besser erst Beträge mit, wenn die Einrichtung abgeschlossen ist.
+- Meldet die erste Person „bezahlt“, ist der Monat gesperrt; Änderungen gelten dann frühestens ab dem Folgemonat
+  (die Oberfläche zeigt den frühesten Monat an und füllt die Formulare damit vor).
+- **Abo beenden** (normaler Weg bei einer Kündigung): Alle Beteiligungen enden nach dem gewählten Monat, das Abo wird
+  archiviert („Beendete Abos anzeigen“) und lässt sich wieder aktivieren. Die Vergangenheit bleibt unverändert.
+- **Abo löschen** entfernt es endgültig und geht nur, solange es in keiner abgelaufenen oder bezahlt gemeldeten
+  Abrechnung vorkommt; sonst bitte beenden.
 
 ## Konfiguration (nur Umgebungsvariablen)
 

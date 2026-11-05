@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import type { Db } from "@/db/client";
 import { payments } from "@/db/schema";
 import { computeMonth, type MonthResult } from "@/lib/billing/compute";
@@ -42,6 +42,27 @@ export function ensureMonthPayments(db: Db, month: Month, now: Date = new Date()
     }
   });
   return result;
+}
+
+/**
+ * Nach einer Änderung (Preis, Beteiligung, Abo beendet/gelöscht): Beträge der noch OFFENEN Zahlungen der
+ * Monate fromMonth..aktueller Monat neu berechnen. Referenz-IDs und Status bleiben erhalten; Zahlungen, die
+ * nichts mehr schulden, werden entfernt. Fehlende Zahlungen entstehen wie üblich beim nächsten Aufruf des Monats.
+ * Bezahlt gemeldete oder bestätigte Zahlungen werden nie angefasst.
+ */
+export function reconcileOpenPayments(db: Db, fromMonth: Month, now: Date = new Date()): void {
+  const to = currentMonth(now);
+  if (fromMonth > to) return;
+  const input = loadBillingInput(db);
+  const rows = db.select().from(payments).where(and(gte(payments.month, fromMonth), lte(payments.month, to), eq(payments.status, "open"))).all();
+  const results = new Map<string, MonthResult>();
+  for (const row of rows) {
+    const result = results.get(row.month) ?? computeMonth(row.month, input.subscriptions, input.participants);
+    results.set(row.month, result);
+    const total = result.totals.find((t) => t.participantId === row.participantId);
+    if (!total || !total.payable) db.delete(payments).where(eq(payments.id, row.id)).run();
+    else if (total.totalCents !== row.amountCents) db.update(payments).set({ amountCents: total.totalCents }).where(eq(payments.id, row.id)).run();
+  }
 }
 
 export type ParticipantPaidResult = "ok" | "not_found" | "locked";
