@@ -330,6 +330,18 @@ und `-shm` löschen), mit **demselben** `DB_ENCRYPTION_KEY` starten.
 **Den Schlüssel sicherst du getrennt** (Passwortmanager). Wer Backup und Schlüssel zusammen aufbewahrt, hebt den
 Schutz der Verschlüsselung auf; ohne Schlüssel ist ein Backup wertlos.
 
+## Abrechnung zurücksetzen (Konten bleiben)
+
+Löscht alle Abos, Preise, Beteiligungen, Zahlungen, Daueraufträge und wartende Erinnerungs-/Preis-Mails. Konten
+(Passwörter, Zahlungsdaten, E-Mail), Einladungen und Bestätigungen bleiben. Vorher legt das Skript automatisch ein
+Backup unter `/data/backups/vor-reset-<Zeit>.db` an.
+
+```bash
+docker compose stop subsplit
+docker compose run --rm --no-deps subsplit node scripts/reset-billing.mjs --yes
+docker compose up -d
+```
+
 ## Datenschutz
 
 - **Mitzahler sehen sich gegenseitig** mit Anzeigenamen, Gewichten, Anteilen und Beträgen **innerhalb der gemeinsamen
