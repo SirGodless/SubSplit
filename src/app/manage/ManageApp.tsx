@@ -159,11 +159,30 @@ function SubsTab({ data, directory, thisMonth, selfId, onSubmit, onRefresh }: {
   const [person, setPerson] = useState("");
   const [weight, setWeight] = useState("1");
   const [filter, setFilter] = useState("");
+  // Neu eingetragene Mitzahler, die erst im Folgemonat starten (Zahlungen des laufenden Monats existieren schon)
+  const pendingNew = data.memberships.filter((m) =>
+    m.validFromMonth === nextMonth &&
+    !data.memberships.some((o) => o !== m && o.subscriptionId === m.subscriptionId && o.userId === m.userId && o.validFromMonth <= thisMonth && (o.validToMonth === null || o.validToMonth >= thisMonth)) &&
+    data.prices.some((p) => p.subscriptionId === m.subscriptionId && p.validFromMonth <= thisMonth),
+  );
   const infoNote = (
-    <p className="notice" style={{ marginBottom: 16 }}>
-      Änderungen an Bestehendem (Preis, Gewicht, Beenden) gelten erst ab dem Folgemonat (<b>{nextMonth}</b>), der laufende Monat bleibt fest.
-      Neue Abos und neue Mitzahler können ab <b>{newStart}</b> starten{newStart > thisMonth ? " (für den laufenden Monat sind schon Zahlungen angelegt)" : ""}.
-    </p>
+    <>
+      <p className="notice" style={{ marginBottom: 16 }}>
+        Änderungen an Bestehendem (Preis, Gewicht, Beenden) gelten erst ab dem Folgemonat (<b>{nextMonth}</b>), der laufende Monat bleibt fest.
+        Neue Abos und neue Mitzahler können ab <b>{newStart}</b> starten{newStart > thisMonth ? " (für den laufenden Monat sind schon Zahlungen angelegt)" : ""}.
+      </p>
+      {pendingNew.length > 0 && (
+        <div className="notice" style={{ marginBottom: 16 }}>
+          <p style={{ marginTop: 0 }}>
+            <b>{pendingNew.map((m) => m.displayName).filter((n, i, a) => a.indexOf(n) === i).join(", ")}</b> startet erst im Folgemonat. Du kannst sie schon in den laufenden Monat einrechnen:
+            Ihr Anteil wird fällig, die noch <b>offenen</b> Beträge der anderen sinken entsprechend. Schon als bezahlt gemeldete oder bestätigte Beträge bleiben unverändert (ein Unterschied wird nicht verrechnet).
+          </p>
+          <button className="btn btn--small" onClick={() => {
+            if (window.confirm("Neue Mitzahler jetzt in den laufenden Monat einrechnen? Offene Beträge der anderen ändern sich.")) void onSubmit(() => api("/api/manage/memberships/include-now", "POST"), "Neue Zahler sind im laufenden Monat eingerechnet.");
+          }}>Im laufenden Monat einrechnen</button>
+        </div>
+      )}
+    </>
   );
 
   const pricesOf = (id: number) => data.prices.filter((p) => p.subscriptionId === id).sort((a, b) => b.validFromMonth.localeCompare(a.validFromMonth));

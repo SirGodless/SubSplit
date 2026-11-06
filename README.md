@@ -11,7 +11,7 @@ Dieselbe Person kann bei anderen wiederum **Mitzahler** sein.
 - **Startseite:** Pro Empfänger steht der offene Betrag (laufender Monat **plus Rückstand** aus Vormonaten), dazu der
   Gesamtbetrag über alle Empfänger. Ein Klick führt zur Zahlungsseite mit PayPal-Link, Bankdaten, Referenz-ID und der
   Aufschlüsselung pro Abo (wer zahlt wie viel, damit nachprüfbar ist, dass nicht mehr verlangt wird als nötig).
-- **Empfänger-Ansicht:** Übersicht mit Gesamtkosten, bezahlt/offen und Verlauf, Abos mit Preisen und Beteiligten.
+- **Empfänger-Ansicht:** Übersicht mit Gesamtkosten, bezahlt/offen und Verlauf, Abos mit Preisen und Beteiligten. Neue Mitzahler, die erst im Folgemonat starten würden, lassen sich per Knopf in den laufenden Monat einrechnen (offene Beträge der anderen sinken, bezahlte bleiben unverändert).
 - **Betreiber:** sieht alle Konten, setzt Passwörter zurück und sperrt Konten, sieht aber keine Beträge, Zahlungsdaten
   oder Teilnehmer anderer, nur eine grobe Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem.
 - **E-Mails (optional, aus, solange `SMTP_HOST` fehlt):** Zahlungserinnerung, Info bei Preisänderung, Adress-Bestätigung

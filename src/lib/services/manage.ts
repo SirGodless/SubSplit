@@ -3,7 +3,7 @@ import type { Db } from "@/db/client";
 import { memberships, payments, subscriptionPrices, subscriptions, users } from "@/db/schema";
 import { addMonths, assertMonth, currentMonth, type Month } from "@/lib/billing/month";
 import { AppError } from "./errors";
-import { firstStartMonthForNew, nextChangeMonth } from "./payments";
+import { firstStartMonthForNew, nextChangeMonth, refreshOpenPayments } from "./payments";
 import { assertCanOwnSubscriptions } from "./users";
 
 /**
@@ -114,6 +114,43 @@ export function setMembership(db: Db, ownerId: number, input: { subscriptionId: 
     clearFrom(tx as unknown as Db, input.subscriptionId, input.userId, input.from);
     tx.insert(memberships).values({ subscriptionId: input.subscriptionId, userId: input.userId, weight: input.weight, validFromMonth: input.from }).run();
   });
+}
+
+/**
+ * Zieht neu eingetragene Mitzahler, die erst ab dem Folgemonat starten würden (weil für den laufenden Monat schon
+ * Zahlungen angelegt sind), in den laufenden Monat vor. Nur Zahler, die im laufenden Monat bei diesem Abo noch nicht
+ * beteiligt sind (keine Gewichtsänderungen) und nur bei aktiven Abos mit einem Preis für den laufenden Monat.
+ * Danach werden die offenen Zahlungen aller neu berechnet; bereits gemeldete/bestätigte bleiben unverändert.
+ */
+export function includeNewMembersInCurrentMonth(db: Db, ownerId: number, now = new Date()): { members: number; adjusted: number; created: number } {
+  const cur = currentMonth(now);
+  const next = addMonths(cur, 1);
+  const subs = db.select().from(subscriptions).where(and(eq(subscriptions.ownerUserId, ownerId), isNull(subscriptions.archivedAt))).all();
+  let members = 0;
+  db.transaction((tx) => {
+    for (const sub of subs) {
+      const hasPriceNow = tx
+        .select({ id: subscriptionPrices.id })
+        .from(subscriptionPrices)
+        .where(and(eq(subscriptionPrices.subscriptionId, sub.id), sql`${subscriptionPrices.validFromMonth} <= ${cur}`))
+        .get();
+      if (!hasPriceNow) continue;
+      const rows = tx.select().from(memberships).where(and(eq(memberships.subscriptionId, sub.id), eq(memberships.validFromMonth, next))).all();
+      for (const r of rows) {
+        const activeNow = tx
+          .select({ id: memberships.id })
+          .from(memberships)
+          .where(and(eq(memberships.subscriptionId, sub.id), eq(memberships.userId, r.userId), coversMonth(cur)))
+          .get();
+        if (activeNow) continue;
+        tx.update(memberships).set({ validFromMonth: cur }).where(eq(memberships.id, r.id)).run();
+        members++;
+      }
+    }
+  });
+  if (members === 0) return { members: 0, adjusted: 0, created: 0 };
+  const res = refreshOpenPayments(db, ownerId, cur, now);
+  return { members, ...res };
 }
 
 /** Bedingung "Beteiligung deckt den Monat ab". */

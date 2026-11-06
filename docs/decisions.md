@@ -122,3 +122,8 @@
 - **Erinnerungen:** Trigger ist die neueste offene, nicht per Dauerauftrag gedeckte Zahlung; erste Mail ab Fälligkeit + 3 Tage, dann alle 7 Tage, höchstens 3 je Zahlung (konfigurierbar); Versandfenster 8–20 Uhr Berlin; ein Scheduler im Prozess (15-Minuten-Takt), der fehlende Zahlungen selbst anlegt (`ensureAllOwnerPayments`).
 - **Abmelden:** zustandslose HMAC-Tokens (SESSION_SECRET), POST ohne Login, ungültig = 404 ohne Sicherheits-Log-Eintrag; Bestätigungslink: unbekannt = `AUTHFAIL invalid_token`, benutzt/abgelaufen = `NOTICE revoked_token`.
 - **Datenschutz:** keine Adressen oder Inhalte in Logs; Fehlertexte werden von Adressen bereinigt und gekürzt.
+
+## Neue Mitzahler in den laufenden Monat einrechnen (Knopf beim Empfänger)
+- Sind für den laufenden Monat schon Zahlungen angelegt, starten neue Mitzahler normalerweise erst im Folgemonat. Der Empfänger kann sie per Knopf („Im laufenden Monat einrechnen“) vorziehen (`includeNewMembersInCurrentMonth`): voller Monatsanteil, egal an welchem Tag.
+- Betroffen sind nur **neue** Mitzahler (kein Gewichtswechsel eines schon beteiligten Kontos) in aktiven Abos mit Preis für den laufenden Monat. Danach werden nur **offene** Zahlungen neu berechnet (Betrag sinkt, fehlende Zahlung des Neuen wird angelegt). Als bezahlt gemeldete oder bestätigte Zahlungen bleiben unverändert, ein Unterschied wird **nicht** verrechnet (Entscheidung des Betreibers; der Empfänger klärt es bei Bedarf selbst).
+- Die Änderung wird den anderen Zahlern nicht per Mail mitgeteilt; sie sehen den neuen Betrag in der App.

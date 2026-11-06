@@ -66,6 +66,38 @@ export function ensureMonthPayments(db: Db, ownerId: number, month: Month, now: 
 }
 
 /**
+ * Rechnet den Monat neu und gleicht NUR offene Zahlungen an (Betrag aktualisieren, fehlende Zahlungen anlegen).
+ * Als bezahlt gemeldete oder bestätigte Zahlungen bleiben unverändert (ein Unterschied wird nicht verrechnet).
+ */
+export function refreshOpenPayments(db: Db, ownerId: number, month: Month, now: Date = new Date()): { adjusted: number; created: number } {
+  assertMonth(month);
+  if (month > currentMonth(now)) throw new Error("Zukünftige Monate werden nicht abgerechnet");
+  const result = computeOwnerMonth(db, ownerId, month);
+  let adjusted = 0;
+  let created = 0;
+  db.transaction((tx) => {
+    for (const t of result.totals) {
+      const row = tx
+        .select()
+        .from(payments)
+        .where(and(eq(payments.payerUserId, t.participantId), eq(payments.recipientUserId, ownerId), eq(payments.month, month)))
+        .get();
+      if (!row) {
+        if (t.payable) {
+          insertPayment(tx as unknown as Db, t.participantId, ownerId, month, t.totalCents);
+          created++;
+        }
+      } else if (row.status === "open" && row.amountCents !== t.totalCents) {
+        tx.update(payments).set({ amountCents: t.totalCents }).where(eq(payments.id, row.id)).run();
+        adjusted++;
+      }
+    }
+  });
+  applyStandingOrders(db, ownerId, now);
+  return { adjusted, created };
+}
+
+/**
  * Stellt sicher, dass für JEDEN Monat vom ersten Abrechnungsmonat bis jetzt die Zahlungen existieren. Nur so
  * geht ein vergessener Vormonat nicht verloren, wenn in dem Monat niemand die App geöffnet hat.
  */
