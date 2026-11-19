@@ -1,5 +1,7 @@
 import { getDbHandle, type Db } from "@/db/client";
 import { getConfig, type Config } from "@/lib/config";
+import { HubApi } from "@/lib/hub/client";
+import { HubOidc } from "@/lib/hub/oidc";
 import { createIpResolver, PEER_HEADER, type IpResolver } from "@/lib/security/client-ip";
 import { RateLimiter } from "@/lib/security/rate-limit";
 import { createSecurityLogger, type SecurityLogger } from "@/lib/security/security-log";
@@ -9,6 +11,8 @@ interface Ctx {
   db: Db;
   logger: SecurityLogger;
   resolveIp: IpResolver;
+  oidc: HubOidc;
+  hub: HubApi;
   loginLimiter: RateLimiter;
   tokenLimiter: RateLimiter;
 }
@@ -18,13 +22,16 @@ const g = globalThis as unknown as { __subsplitCtx?: Ctx };
 export function ctx(): Ctx {
   if (!g.__subsplitCtx) {
     const config = getConfig();
+    const oidc = new HubOidc(config.hub);
     g.__subsplitCtx = {
       config,
       db: getDbHandle().db,
       logger: createSecurityLogger({ file: config.securityLogFile }),
       resolveIp: createIpResolver(config.trustedProxyCidrs),
-      loginLimiter: new RateLimiter(10, 15 * 60 * 1000), // Anmeldeversuche je IP
-      tokenLimiter: new RateLimiter(120, 60 * 1000), // Abfragen mit Einrichtungslink je IP
+      oidc,
+      hub: new HubApi(oidc, config.hub.clientId),
+      loginLimiter: new RateLimiter(20, 15 * 60 * 1000), // Anmeldungen und Rücksprünge je IP
+      tokenLimiter: new RateLimiter(120, 60 * 1000), // Abmelde-Links je IP
     };
   }
   return g.__subsplitCtx;

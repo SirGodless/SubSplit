@@ -6,6 +6,8 @@ const valid = {
   BASE_URL: "https://abos.example.org/",
   SESSION_SECRET: "x".repeat(32),
   DB_ENCRYPTION_KEY: "y".repeat(32),
+  OIDC_ISSUER: "https://anfall.net/",
+  OIDC_CLIENT_SECRET: "geheim-vom-hub",
 };
 
 function problems(env: Record<string, string | undefined>): string[] {
@@ -99,19 +101,20 @@ describe("Inaktivitäts-Timeout und Warnschwellen", () => {
   });
 });
 
-describe("Einladungen per Umgebung", () => {
-  it("Standard: alle Konten, 5 gleichzeitig", () => {
-    expect(loadConfig(valid).invite).toEqual({ creators: "all", maxActive: 5 });
+describe("Hub per Umgebung", () => {
+  it("Standard: Client-ID subsplit, Herkunft des Hubs für frame-ancestors, kein interner Weg", () => {
+    expect(loadConfig(valid).hub).toEqual({ issuer: "https://anfall.net", clientId: "subsplit", clientSecret: "geheim-vom-hub", internalUrl: null, origin: "https://anfall.net" });
   });
-  it("einstellbar: nur Betreiber, anderes Limit, 0 = abgeschaltet", () => {
-    expect(loadConfig({ ...valid, INVITATIONS_CREATORS: "operator", INVITATIONS_MAX_ACTIVE: "12" }).invite).toEqual({ creators: "operator", maxActive: 12 });
-    expect(loadConfig({ ...valid, INVITATIONS_CREATORS: "OPERATOR" }).invite.creators).toBe("operator");
-    expect(loadConfig({ ...valid, INVITATIONS_MAX_ACTIVE: "0" }).invite.maxActive).toBe(0);
-    expect(loadConfig({ ...valid, INVITATIONS_MAX_ACTIVE: "100" }).invite.maxActive).toBe(100);
+  it("einstellbar: Client-ID und interne Adresse", () => {
+    const c = loadConfig({ ...valid, OIDC_CLIENT_ID: "abos", OIDC_INTERNAL_URL: "http://auth-backend:8080/" }).hub;
+    expect(c).toMatchObject({ clientId: "abos", internalUrl: "http://auth-backend:8080" });
   });
-  it("lehnt ungültige Werte ab", () => {
-    for (const bad of ["jeder", "admin", "users"]) expect(problems({ ...valid, INVITATIONS_CREATORS: bad }).join(), bad).toMatch(/INVITATIONS_CREATORS/);
-    for (const bad of ["-1", "101", "abc", "2.5", "1000"]) expect(problems({ ...valid, INVITATIONS_MAX_ACTIVE: bad }).join(), bad).toMatch(/INVITATIONS_MAX_ACTIVE/);
+  it("Aussteller und Geheimnis sind Pflicht, Ungültiges wird abgelehnt", () => {
+    expect(problems({ ...valid, OIDC_ISSUER: undefined }).join()).toMatch(/OIDC_ISSUER fehlt/);
+    expect(problems({ ...valid, OIDC_CLIENT_SECRET: undefined }).join()).toMatch(/OIDC_CLIENT_SECRET fehlt/);
+    for (const bad of ["anfall.net", "ftp://anfall.net", "https://anfall.net/?x=1"]) expect(problems({ ...valid, OIDC_ISSUER: bad }).join(), bad).toMatch(/OIDC_ISSUER/);
+    for (const bad of ["Gross", "a", "mit leerzeichen"]) expect(problems({ ...valid, OIDC_CLIENT_ID: bad }).join(), bad).toMatch(/OIDC_CLIENT_ID/);
+    expect(problems({ ...valid, OIDC_INTERNAL_URL: "kaputt" }).join()).toMatch(/OIDC_INTERNAL_URL/);
   });
 });
 

@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, lt, lte } from "drizzle-orm";
 import type { Db } from "@/db/client";
-import { emailVerifications, mailOutbox, users } from "@/db/schema";
+import { mailOutbox, users } from "@/db/schema";
+import { identityOf } from "@/lib/hub/identity";
 import type { MailTransport } from "@/lib/mail/transport";
 
 export const MAX_ATTEMPTS = 5;
@@ -8,7 +9,7 @@ export const MAX_ATTEMPTS = 5;
 export const BACKOFF_MINUTES = [5, 30, 120, 720, 1440];
 const RETENTION_DAYS = 60;
 
-export type MailType = "verify_email" | "reminder" | "price_change" | "test";
+export type MailType = "reminder" | "price_change" | "test";
 
 export interface MailInput {
   toUserId: number | null;
@@ -69,14 +70,13 @@ export async function processOutbox(db: Db, transport: MailTransport, now: Date 
       result.failed++;
     };
     const user = row.toUserId ? db.select().from(users).where(eq(users.id, row.toUserId)).get() : undefined;
+    const hubUser = row.toUserId ? identityOf(row.toUserId) : undefined;
     if (!row.toAddress) { fail("keine Adresse"); continue; }
-    if (row.type !== "verify_email" || row.toUserId) {
-      if (!user || user.disabledAt) { fail("Konto nicht mehr aktiv"); continue; }
-      if (row.type !== "verify_email" && (user.email !== row.toAddress || !user.emailVerifiedAt)) { fail("Adresse nicht mehr bestätigt"); continue; }
-      if (row.type === "reminder" && !user.remindersEnabled) { fail("Erinnerungen abgeschaltet"); continue; }
-      if (row.type === "price_change" && !user.priceMailsEnabled) { fail("Preis-Infos abgeschaltet"); continue; }
-      if (row.type === "verify_email" && user.email !== row.toAddress) { fail("Adresse wurde inzwischen geändert"); continue; }
-    }
+    // Konto, Sperre und Adresse sind Sache des Hubs: Sein Stand (höchstens eine Minute alt) entscheidet
+    if (!user || !hubUser || hubUser.banned || !hubUser.access) { fail("Konto nicht mehr aktiv"); continue; }
+    if (hubUser.email !== row.toAddress || !hubUser.emailVerified) { fail("Adresse nicht mehr bestätigt"); continue; }
+    if (row.type === "reminder" && !user.remindersEnabled) { fail("Erinnerungen abgeschaltet"); continue; }
+    if (row.type === "price_change" && !user.priceMailsEnabled) { fail("Preis-Infos abgeschaltet"); continue; }
     try {
       await transport.send({ to: row.toAddress, subject: row.subject, text: row.bodyText, unsubscribeUrl: row.unsubscribeUrl });
       db.update(mailOutbox).set({ status: "sent", sentAt: now.toISOString(), attempts: row.attempts + 1, lastError: null, bodyText: "", toAddress: null }).where(eq(mailOutbox.id, row.id)).run();
@@ -96,9 +96,8 @@ export async function processOutbox(db: Db, transport: MailTransport, now: Date 
   return result;
 }
 
-/** Räumt erledigte Einträge nach 60 Tagen auf (verschickte/fehlgeschlagene Mails, alte Bestätigungslinks). */
+/** Räumt erledigte Einträge nach 60 Tagen auf (verschickte und fehlgeschlagene Mails). */
 export function purgeOldMail(db: Db, now: Date = new Date()): void {
   const cutoff = new Date(now.getTime() - RETENTION_DAYS * 24 * 3600 * 1000).toISOString();
   db.delete(mailOutbox).where(and(inArray(mailOutbox.status, ["sent", "failed"]), lt(mailOutbox.createdAt, cutoff))).run();
-  db.delete(emailVerifications).where(lt(emailVerifications.createdAt, cutoff)).run();
 }

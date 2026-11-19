@@ -127,3 +127,54 @@
 - Sind für den laufenden Monat schon Zahlungen angelegt, starten neue Mitzahler normalerweise erst im Folgemonat. Der Empfänger kann sie per Knopf („Im laufenden Monat einrechnen“) vorziehen (`includeNewMembersInCurrentMonth`): voller Monatsanteil, egal an welchem Tag.
 - Betroffen sind nur **neue** Mitzahler (kein Gewichtswechsel eines schon beteiligten Kontos) in aktiven Abos mit Preis für den laufenden Monat. Danach werden nur **offene** Zahlungen neu berechnet (Betrag sinkt, fehlende Zahlung des Neuen wird angelegt). Als bezahlt gemeldete oder bestätigte Zahlungen bleiben unverändert, ein Unterschied wird **nicht** verrechnet (Entscheidung des Betreibers; der Empfänger klärt es bei Bedarf selbst).
 - Die Änderung wird den anderen Zahlern nicht per Mail mitgeteilt; sie sehen den neuen Betrag in der App.
+
+---
+
+# Konten aus dem Hub (Umbau auf AuthenticationService, 19.11.2026)
+
+Kennzeichnung: **[E]** von Joshua entschieden. **[A]** Annahme, wartet auf Bestätigung. **[U]** nicht verifiziert. Ersetzt die Entscheidungen zu Konten, Anmeldung, Einladungen, Passwörtern und Betreiber-Konten weiter oben.
+
+## Entscheidungen von Joshua
+
+- **[E]** Konten, Anmeldung, Einladungen, Passwörter, 2FA und Sperren kommen aus dem Hub. SubSplit bekommt **nur eine UUID** und speichert daran die eigenen Daten. Alle Nutzerdaten (Name, E-Mail, Sprache) verwaltet der Hub und übergibt sie. Brauchen später mehrere Dienste dieselben Daten, wird entschieden, ob sie in den Hub oder anderswohin wandern.
+- **[E]** SubSplit ist auf zwei Arten nutzbar: als eigene Webseite unter eigener Subdomain und eingebettet im Hub, mit eigener Ansicht für den Rahmen.
+- **[E]** Abmelden im Hub meldet überall ab (Back-Channel-Logout).
+- **[E]** Die bisherigen Konten dürfen neu eingetragen werden, die Datenmigration ist daher nur ein Angebot (siehe unten).
+
+## Datenmodell
+
+- `users`: `id` (bleibt Integer, alle Fremdschlüssel hängen daran), `sub` (UUID aus dem Hub, eindeutig), Empfängerdaten, Fälligkeitstag, Mail-Einstellungen. Weg sind Benutzername, Anzeigename, E-Mail, Passwort, Sitzungsversion, Einrichtungslink, Rolle und Sperre. Tabellen `invitations` und `email_verifications` entfallen.
+- **Migration `0004` ohne Tabellenumbau:** drizzle-kit hat `ALTER TABLE … DROP COLUMN` erzeugt. Ein Umbau per `DROP TABLE users` hätte wegen `ON DELETE CASCADE` bei aktiven Fremdschlüsseln alle Abos und Zahlungen mitgelöscht, weil `PRAGMA foreign_keys=OFF` innerhalb der Migrations-Transaktion wirkungslos ist. Der Upgrade-Test (`tests/upgrade.test.ts`) prüft, dass Abos, Preise, Beteiligungen und Zahlungen erhalten bleiben.
+- Der alte Benutzername und Anzeigename landen in `legacy_username` und `legacy_display_name`. **[A]** Nur damit sich ein altes Konto mit `scripts/link-user.mjs <alter-name> <UUID>` dem Hub-Konto zuordnen lässt (mit automatischem Backup). Wer das nicht braucht, trägt Konten neu ein: Beim ersten Login entsteht ein leeres Konto, das alte bleibt ungenutzt liegen.
+- **Anzeigename:** Der Hub hat nur den Benutzernamen, er dient als Anzeigename. Ein eigener Anzeigename wäre eine neue Eigenschaft im Hub **[O]**.
+
+## Anmeldung und Sitzungen
+
+- **OIDC-Client** (Authorization Code mit PKCE, Scopes `openid offline_access`). Bibliothek `jose` 6.2.18 (feste Version) für die Prüfung der Tokens statt eigener Kryptografie: nur RS256, Signatur über das JWKS des Hubs, Aussteller, Empfänger, Ablauf. Schlüssel werden bei unbekannter `kid` neu geladen. Gegen den Hub-Test geprüft, siehe unten.
+- **Weiterleitung:** `/auth/login` legt `state`, `nonce` und PKCE-Verifier in ein signiertes Cookie `subsplit_oidc` (`SameSite=Lax`, weil der Hub mit einer Weiterleitung zurückkommt, 10 Minuten, nur Pfad `/auth`). `/auth/callback` prüft `state` im konstanten Vergleich, tauscht den Code, prüft das ID-Token und liest über die Dienst-Schnittstelle, ob der Nutzer Zugang hat und Betreiber ist.
+- **Sitzung in der Datenbank** statt eines signierten Cookies (Tabelle `sessions`, Cookie-Wert zufällig, gespeichert nur der SHA-256-Hash). Grund: Der Hub muss einzelne Sitzungen beenden können (Back-Channel-Logout). Inaktivitäts-Timeout 30 Minuten (gleitend, Schreibzugriff höchstens einmal pro Minute), CSRF-Token pro Sitzung. Cookie `SameSite=Strict`, im Rahmen des Hubs gilt es als gleiche Site (siehe Einbetten).
+- **[A] Zugangsprüfung alle 5 Minuten** (`HUB_CHECK_SECONDS`): Das Refresh-Token wird eingelöst, das scheitert bei Bann, entzogenem Recht und beendeter Hub-Sitzung (der Hub prüft dort alles neu). Danach wird das Recht `subsplit.operator` neu gelesen und der Zugang bestätigt. Das neue Refresh-Token wird sofort gespeichert, bevor etwas anderes passiert (das alte ist verbraucht). Gleichzeitige Prüfungen einer Sitzung teilen sich eine Anfrage. **Antwortet der Hub nicht, bleibt die Sitzung** und es gibt in einer Minute einen neuen Versuch (**[A]** lieber erreichbar als bei jeder Störung abgemeldet).
+- **Betreiber** = Recht `subsplit.operator` im Hub. Die Betreiber-Seite zeigt nur Konten mit Status laut Hub, Größenklasse und Warnung. Passwort-Reset und Sperren gibt es dort nicht mehr (im Hub).
+- **Abmelden in SubSplit** beendet nur die lokale Sitzung und führt auf `/signed-out` (kein automatischer Rücksprung zur Anmeldung, sonst würde der Hub sofort wieder anmelden).
+
+## Gemeinsames Abmelden
+
+- `/auth/backchannel-logout` (POST, `logout_token`): prüft Signatur, Aussteller, Empfänger, `exp`, `typ=logout+jwt`, das Ereignis `http://schemas.openid.net/event/backchannel-logout`, **kein `nonce`**, `sub` oder `sid` vorhanden, `jti` nur einmal (im Arbeitsspeicher, 5 Minuten). Mit `sid` endet nur die Sitzung aus dieser Hub-Sitzung, ohne `sid` enden alle Sitzungen des Nutzers. Antwort 200, sonst 400. **[U]** Die Spezifikation selbst war nicht abrufbar, siehe `docs/decisions/single-logout-and-embedding.md` im Hub-Repo.
+
+## Nutzerdaten
+
+- Namen, E-Mail und Sperre holt `refreshIdentities` per `GET /api/service/users` (alle lokalen Konten, in Blöcken zu 100) und hält sie **nur im Arbeitsspeicher**, höchstens eine Abfrage pro Minute. Die Ansichten (`views.ts`) bleiben synchron und lesen daraus. **[A]** Vor jeder Antwort ruft der Server `refreshIdentities` auf (in `authenticate` und im Mail-Planer). Fällt der Hub aus, bleiben die letzten Werte, sonst steht „(unbekannt)“.
+- **Mitzahler-Auswahl:** alle Nutzer mit Zugang laut Hub. Wer noch nie angemeldet war, bekommt dabei sein lokales Konto (ohne Daten). Mitzahler müssen im Hub Zugang haben und nicht gesperrt sein (`assertUserSelectable`).
+- **Mails:** Adresse und „bestätigt“ kommen vom Hub, SubSplit bestätigt selbst nichts mehr. **[A]** Die Mail-Warteschlange hält die Adresse weiterhin bis zum Versand (danach gelöscht), weil der Mailtext den Namen enthält. Vor dem Versand wird gegen den Hub geprüft: nicht gesperrt, Zugang, Adresse unverändert und bestätigt.
+
+## Einbetten
+
+- `frame-ancestors <Herkunft von OIDC_ISSUER>` für alle Seiten, **kein** `X-Frame-Options`. Gesetzt in `src/proxy.ts` (Next.js 16: `middleware` heißt jetzt `proxy`, laut den Docs im Paket), weil `headers()` in `next.config.ts` beim Bauen feststeht und die Hub-Adresse erst beim Start bekannt ist. Die CSP ist als Funktion getestet.
+- **Eigene Ansicht:** `Sec-Fetch-Dest: iframe` (laut MDN nicht von JavaScript setzbar). `AppShell` lässt dann Kopfzeile, Hell/Dunkel und Abmelden weg. Sonst gleiche Seiten.
+- **Cookies:** Hub und Dienst auf Subdomains derselben Domain sind dieselbe Site, `SameSite=Strict` wird im Rahmen mitgeschickt. **Voraussetzung: SubSplit läuft unter einer Subdomain der Hub-Domain.** [U] nicht im echten Browser geprüft.
+
+## Geprüft
+
+- **Tests:** 204, davon neu `hub-oidc.test.ts` (Tokenprüfung, Refresh, Logout-Token, interne Adresse, alles gegen einen Mock-Hub mit echten Signaturen), `auth-flow.test.ts` (Anmeldung, Zugangsprüfung, Bann, Hub-Ausfall, gleichzeitige Prüfungen, Back-Channel-Logout, Abmelden, CSRF, Betreiber).
+- **Gegen den echten Hub:** Einmaliger Lauf (nicht eingecheckt) gegen den Docker-Stack des Hubs: Anmeldung über die echte Authorize-Adresse, ID-Token mit `sid`, Refresh mit Rotation, Rolle `subsplit.operator` nach der Prüfung, `GET /api/service/users`, und ein **echtes Logout-Token** des Hubs bei „Abmelden im Hub“, das SubSplit annahm und die Sitzung löschte. Dabei lief SubSplit als Prozess im Test, nicht als Container, und die Browser-Weiterleitungen wurden nachgestellt.
+- **Nicht geprüft:** Docker-Build des SubSplit-Containers im Verbund, Verhalten im Browser (Rahmen, Cookies), echter Mailversand.

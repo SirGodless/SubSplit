@@ -10,7 +10,7 @@ function fresh(): Db {
   runMigrations(h, "./drizzle");
   return h.db;
 }
-const u = (name: string, extra: Partial<typeof users.$inferInsert> = {}) => ({ username: name, displayName: name, ...extra });
+const u = (sub: string, extra: Partial<typeof users.$inferInsert> = {}) => ({ sub, ...extra });
 
 describe("Schema / Migration", () => {
   it("läuft auf leerer DB durch und erzwingt Constraints", () => {
@@ -23,7 +23,7 @@ describe("Schema / Migration", () => {
     expect(() => db.insert(subscriptionPrices).values({ subscriptionId: sub!.id, validFromMonth: "kaputt", amountCents: 1 }).run()).toThrow();
   });
 
-  it("Benutzername ist eindeutig, Fälligkeitstag nur 1-28", () => {
+  it("Hub-Kennung ist eindeutig, Fälligkeitstag nur 1-28", () => {
     const db = fresh();
     db.insert(users).values(u("anna")).run();
     expect(() => db.insert(users).values(u("anna")).run()).toThrow();
@@ -76,7 +76,7 @@ describe("Verschlüsselung der Datenbankdatei", () => {
     const path = join(dir, "a.db");
     const h = openDatabase(path, KEY);
     runMigrations(h, "./drizzle");
-    h.db.insert(users).values(u("anna-geheim", { displayName: "Anna Musterfrau", iban: "DE89370400440532013000", email: "anna@example.org" })).run();
+    h.db.insert(users).values(u("anna-geheim", { recipientName: "Anna Musterfrau", iban: "DE89370400440532013000", legacyUsername: "anna@example.org" })).run();
     const wal = readFileSync(`${path}-wal`);
     for (const secret of ["Anna Musterfrau", "DE89370400440532013000", "anna@example.org", "anna-geheim"]) expect(wal.includes(secret), `WAL: ${secret}`).toBe(false);
     h.sqlite.close();

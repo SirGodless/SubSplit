@@ -9,7 +9,7 @@ export default function LogoutButton() {
       /* Sitzung war schon weg */
     }
     setCsrf(null);
-    window.location.href = "/login";
+    window.location.href = "/signed-out";
   }
   return <button type="button" className="btn btn--small" onClick={logout}>Abmelden</button>;
 }

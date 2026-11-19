@@ -1,6 +1,7 @@
 import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "@/db/client";
 import { memberships, payments, standingOrders, subscriptionPrices, subscriptions, users } from "@/db/schema";
+import { displayNameOf, identityOf } from "@/lib/hub/identity";
 import { addMonths, assertMonth, berlinDate, currentMonth, dueDateOf, type Month } from "@/lib/billing/month";
 import { AppError } from "./errors";
 import { endMembershipFrom } from "./manage";
@@ -82,29 +83,30 @@ export interface HomeView {
 
 /** Startseite: offene Zahlungen pro Empfänger (inkl. Rückstand) mit Gesamtsumme und die eigenen Abos. */
 export function getHome(db: Db, userId: number, now: Date = new Date()): HomeView | null {
-  const me = db.select({ displayName: users.displayName }).from(users).where(eq(users.id, userId)).get();
-  if (!me) return null;
+  if (!db.select({ id: users.id }).from(users).where(eq(users.id, userId)).get()) return null;
+  const me = { displayName: displayNameOf(userId) };
   const cur = currentMonth(now);
 
   const mem = db
     .select({
-      id: subscriptions.id, name: subscriptions.name, ownerId: subscriptions.ownerUserId, ownerName: users.displayName,
+      id: subscriptions.id, name: subscriptions.name, ownerId: subscriptions.ownerUserId,
       weight: memberships.weight, from: memberships.validFromMonth, to: memberships.validToMonth,
     })
     .from(memberships)
     .innerJoin(subscriptions, eq(subscriptions.id, memberships.subscriptionId))
-    .innerJoin(users, eq(users.id, subscriptions.ownerUserId))
     .where(and(eq(memberships.userId, userId), or(isNull(memberships.validToMonth), gt(memberships.validToMonth, addMonths(cur, -1)))))
-    .all();
+    .all()
+    .map((m) => ({ ...m, ownerName: displayNameOf(m.ownerId) }));
   for (const ownerId of new Set(mem.map((m) => m.ownerId))) ensureOwnerPayments(db, ownerId, now);
 
   const rows = db
-    .select({ p: payments, recipientName: users.displayName, dueDay: users.dueDay })
+    .select({ p: payments, dueDay: users.dueDay })
     .from(payments)
     .innerJoin(users, eq(users.id, payments.recipientUserId))
     .where(and(eq(payments.payerUserId, userId), lte(payments.month, cur), inArray(payments.status, ["open", "marked_paid"])))
     .orderBy(payments.month)
-    .all();
+    .all()
+    .map((r) => ({ ...r, recipientName: displayNameOf(r.p.recipientUserId) }));
   const orders = new Map(db.select().from(standingOrders).where(eq(standingOrders.payerUserId, userId)).all().map((o) => [o.recipientUserId, o.fromMonth]));
   const byRecipient = new Map<number, HomePayment>();
   for (const r of rows) {
@@ -204,11 +206,7 @@ export function getPayerView(db: Db, payerId: number, recipientId: number, reque
   if (!months.includes(month)) return null;
 
   const result = computeOwnerMonth(db, recipientId, month);
-  const names = new Map(
-    db.select({ id: users.id, displayName: users.displayName }).from(users)
-      .where(inArray(users.id, [...new Set(result.subscriptions.flatMap((s) => s.lines.map((l) => l.participantId)))].concat([payerId]))).all()
-      .map((u) => [u.id, u.displayName]),
-  );
+  const names = new Map([...new Set(result.subscriptions.flatMap((s) => s.lines.map((l) => l.participantId)).concat([payerId]))].map((id) => [id, displayNameOf(id)]));
   const subs = result.subscriptions
     .filter((s) => s.lines.some((l) => l.participantId === payerId))
     .map((s) => ({
@@ -226,8 +224,8 @@ export function getPayerView(db: Db, payerId: number, recipientId: number, reque
   const newest = open[open.length - 1];
   const thisMonth = own.find((p) => p.month === month);
   return {
-    recipient: { id: recipient.id, displayName: recipient.displayName },
-    recipientPay: { name: recipient.recipientName ?? recipient.displayName, iban: recipient.iban, paypalMe: recipient.paypalMe },
+    recipient: { id: recipient.id, displayName: displayNameOf(recipient.id) },
+    recipientPay: { name: recipient.recipientName ?? displayNameOf(recipient.id), iban: recipient.iban, paypalMe: recipient.paypalMe },
     month,
     months,
     totalCents: result.totals.find((t) => t.participantId === payerId)?.totalCents ?? 0,
@@ -304,12 +302,12 @@ export function getOwnerOverview(db: Db, ownerId: number, requestedMonth?: strin
   const { totals, result } = monthTotals(db, ownerId, month);
 
   const rows = db
-    .select({ p: payments, payerName: users.displayName })
+    .select({ p: payments })
     .from(payments)
-    .innerJoin(users, eq(users.id, payments.payerUserId))
     .where(and(eq(payments.recipientUserId, ownerId), eq(payments.month, month)))
-    .orderBy(users.displayName)
-    .all();
+    .all()
+    .map((r) => ({ ...r, payerName: displayNameOf(r.p.payerUserId) }))
+    .sort((a, b) => a.payerName.localeCompare(b.payerName, "de"));
   const older = db
     .select({ payer: payments.payerUserId, amount: payments.amountCents })
     .from(payments)
@@ -350,8 +348,8 @@ export interface OperatorAccount {
   id: number;
   username: string;
   displayName: string;
-  role: "operator" | "user";
-  status: "invited" | "active" | "disabled";
+  /** Laut Hub: gesperrt oder ohne Zugang zu SubSplit. */
+  status: "active" | "no_access" | "banned" | "unknown";
   volumeClass: VolumeClass;
   warning: null | "threshold" | "jump";
 }
@@ -365,13 +363,15 @@ export function volumeClassOf(cents: number): VolumeClass {
 }
 
 /**
- * Konten für den Betreiber. Bewusst nur Benutzername, Anzeigename, Rolle, Status, eine grobe Größenklasse der
+ * Konten für den Betreiber. Bewusst nur Benutzername, Status laut Hub, eine grobe Größenklasse der
  * Monatssumme und eine Warnung bei Ungewöhnlichem (fester Schwellenwert oder Vielfaches des 3-Monats-Durchschnitts).
  * Keine Beträge, keine Zahlungsdaten, keine E-Mail, keine Teilnehmer.
  */
 export function getOperatorAccounts(db: Db, cfg: { thresholdCents: number; factor: number }, now: Date = new Date()): OperatorAccount[] {
   const cur = currentMonth(now);
-  const all = db.select({ id: users.id, username: users.username, displayName: users.displayName, role: users.role, passwordHash: users.passwordHash, disabledAt: users.disabledAt }).from(users).orderBy(users.username).all();
+  const all = db.select({ id: users.id, legacyUsername: users.legacyUsername }).from(users).all()
+    .map((u) => ({ ...u, username: displayNameOf(u.id) === "(unbekannt)" ? u.legacyUsername ?? "(unbekannt)" : displayNameOf(u.id) }))
+    .sort((a, b) => a.username.localeCompare(b.username, "de"));
   const owners = new Set(db.select({ o: subscriptions.ownerUserId }).from(subscriptions).all().map((r) => r.o));
   return all.map((u) => {
     let volume = 0;
@@ -385,8 +385,8 @@ export function getOperatorAccounts(db: Db, cfg: { thresholdCents: number; facto
       else if (avg > 0 && volume > cfg.factor * avg) warning = "jump";
     }
     return {
-      id: u.id, username: u.username, displayName: u.displayName, role: u.role,
-      status: u.disabledAt ? "disabled" : u.passwordHash ? "active" : "invited",
+      id: u.id, username: u.username, displayName: u.username,
+      status: !identityOf(u.id) ? "unknown" : identityOf(u.id)!.banned ? "banned" : identityOf(u.id)!.access ? "active" : "no_access",
       volumeClass: volumeClassOf(volume), warning,
     };
   });
@@ -414,11 +414,11 @@ export function getManageData(db: Db, user: { id: number; iban: string | null; p
   const prices = ids.length ? db.select().from(subscriptionPrices).where(inArray(subscriptionPrices.subscriptionId, ids)).all() : [];
   const ms = ids.length
     ? db
-        .select({ m: memberships, displayName: users.displayName })
+        .select({ m: memberships })
         .from(memberships)
-        .innerJoin(users, eq(users.id, memberships.userId))
         .where(inArray(memberships.subscriptionId, ids))
         .all()
+        .map((r) => ({ ...r, displayName: displayNameOf(r.m.userId) }))
     : [];
   return {
     canOwn: !!(user.iban || user.paypalMe),

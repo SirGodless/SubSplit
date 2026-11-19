@@ -4,7 +4,8 @@ import { openDatabase, runMigrations, type Db } from "@/db/client";
 import { memberships, payments } from "@/db/schema";
 import { createSubscription, endSubscription, includeNewMembersInCurrentMonth, setMembership, setPrice } from "@/lib/services/manage";
 import { ensureOwnerPayments, setPaidByPayer, setStatusByOwner } from "@/lib/services/payments";
-import { createUser, updateRecipient } from "@/lib/services/users";
+import { updateRecipient } from "@/lib/services/users";
+import { createUser } from "./helpers";
 
 const NOW = new Date("2026-11-04T12:00:00Z");
 const M = "2026-11";

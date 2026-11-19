@@ -8,7 +8,8 @@ import {
   setMembership, setPrice,
 } from "@/lib/services/manage";
 import { ensureMonthPayments, ensureOwnerPayments, firstStartMonthForNew, nextChangeMonth, setPaidByPayer, setStatusByOwner } from "@/lib/services/payments";
-import { createUser, updateRecipient } from "@/lib/services/users";
+import { updateRecipient } from "@/lib/services/users";
+import { createUser, setBanned } from "./helpers";
 import { getHome, getOperatorAccounts, getOwnerOverview, getPayerView, leaveSubscription, planLeave, volumeClassOf } from "@/lib/services/views";
 
 const NOW = new Date("2026-11-04T12:00:00Z"); // 4. November 2026, Berlin
@@ -73,7 +74,7 @@ describe("Mandantentrennung: ein Konto kann nichts von einem anderen lesen oder 
     expect(getPayerView(db, boss, boss, M, NOW)).toBeNull();
   });
   it("gesperrte Konten lassen sich nicht als Mitzahler eintragen", () => {
-    db.update(users).set({ disabledAt: "2026-01-01" }).where(eq(users.id, cleo)).run();
+    setBanned(cleo, true);
     expect(() => join(boss, netflix, cleo, 1, "2026-12")).toThrow(/Konto nicht gefunden/);
   });
 });
@@ -291,21 +292,21 @@ describe("Betreiber-Sicht", () => {
   });
   it("zeigt nur Konto-Stammdaten, Größenklasse und Warnung, keine Beträge, Daten oder Teilnehmer", () => {
     const list = getOperatorAccounts(db, { thresholdCents: 50_000, factor: 3 }, NOW);
-    const b = list.find((a) => a.username === "boss")!;
-    expect(b).toMatchObject({ role: "user", status: "invited", volumeClass: "lt100", warning: null });
-    expect(Object.keys(b).sort()).toEqual(["displayName", "id", "role", "status", "username", "volumeClass", "warning"]);
+    const b = list.find((a) => a.username === "Boss")!;
+    expect(b).toMatchObject({ status: "active", volumeClass: "lt100", warning: null });
+    expect(Object.keys(b).sort()).toEqual(["displayName", "id", "status", "username", "volumeClass", "warning"]);
     const json = JSON.stringify(list);
     // Anzeigenamen der Konten sind sichtbar, Abos, Beträge, Zahlungsdaten und E-Mails nicht
     for (const secret of ["geheim", "@example.org", "GB82", "Netflix", "Spotify", "1800", "900", "iban"]) expect(json, secret).not.toContain(secret);
-    expect(list.find((a) => a.username === "anna")!.volumeClass).toBe("none");
+    expect(list.find((a) => a.username === "Anna")!.volumeClass).toBe("none");
   });
   it("Warnung beim festen Schwellenwert und bei starkem Sprung gegenüber dem Durchschnitt", () => {
-    expect(getOperatorAccounts(db, { thresholdCents: 1000, factor: 3 }, NOW).find((a) => a.username === "boss")!.warning).toBe("threshold");
+    expect(getOperatorAccounts(db, { thresholdCents: 1000, factor: 3 }, NOW).find((a) => a.username === "Boss")!.warning).toBe("threshold");
     // Sprung: Vormonate je 300, jetzt 3000 (> 3x den Durchschnitt)
     const big = db.insert(subscriptions).values({ ownerUserId: other, name: "Groß" }).returning().get();
     db.insert(subscriptionPrices).values([{ subscriptionId: big.id, validFromMonth: "2026-08", amountCents: 300 }, { subscriptionId: big.id, validFromMonth: "2026-11", amountCents: 3000 }]).run();
     db.insert(memberships).values({ subscriptionId: big.id, userId: bob, weight: 1, validFromMonth: "2026-08" }).run();
-    const w = getOperatorAccounts(db, { thresholdCents: 10_000_000, factor: 3 }, NOW).find((a) => a.username === "other")!;
+    const w = getOperatorAccounts(db, { thresholdCents: 10_000_000, factor: 3 }, NOW).find((a) => a.username === "Other")!;
     expect(w.warning).toBe("jump");
   });
 });

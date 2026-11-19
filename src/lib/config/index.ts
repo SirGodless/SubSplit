@@ -1,11 +1,17 @@
 import { BlockList, isIP } from "node:net";
 import { DEFAULT_PAYPAL_FORMAT, type PaypalLinkFormat } from "@/lib/pay/paypal";
 
-/** Wer Einladungslinks erstellen darf und wie viele jedes Konto gleichzeitig offen haben darf. */
-export interface InviteSettings {
-  creators: "all" | "operator";
-  /** 0 = Einladungen ganz abgeschaltet. */
-  maxActive: number;
+/** Anbindung an den Hub (AuthenticationService): OpenID Connect für die Anmeldung, Dienst-Schnittstelle für Nutzerdaten. */
+export interface HubConfig {
+  /** Fester Aussteller des Hubs, z. B. https://anfall.net. Steht als `iss` in jedem Token. */
+  issuer: string;
+  /** Schlüssel des Dienstes im Hub (Client-ID, zugleich Präfix seiner Rechte). */
+  clientId: string;
+  clientSecret: string;
+  /** Optional: Adresse, unter der dieser Container den Hub direkt erreicht (z. B. http://auth-backend:8080). Nur für Aufrufe von Server zu Server. */
+  internalUrl: string | null;
+  /** Der Hub als Einbettender: Nur diese Herkunft darf SubSplit in einem Rahmen anzeigen (frame-ancestors). */
+  origin: string;
 }
 
 /** SMTP-Zugang für den Mailversand (nur vorhanden, wenn SMTP_HOST gesetzt ist). */
@@ -51,7 +57,7 @@ export interface Config {
   /** Warnschwelle für die Monatssumme eines Empfängers (Cent) und Faktor gegenüber dem 3-Monats-Durchschnitt. */
   unusualMonthlyTotalCents: number;
   unusualFactor: number;
-  invite: InviteSettings;
+  hub: HubConfig;
   /** null = es werden keine E-Mails verschickt. */
   mail: MailConfig | null;
   reminders: ReminderSettings;
@@ -152,14 +158,31 @@ export function loadConfig(env: Env = process.env): Config {
     else unusualFactor = Number(facRaw);
   }
 
-  const invite: InviteSettings = { creators: "all", maxActive: 5 };
-  const credRaw = get("INVITATIONS_CREATORS").toLowerCase();
-  if (credRaw === "all" || credRaw === "operator") invite.creators = credRaw;
-  else if (credRaw) problems.push('INVITATIONS_CREATORS muss "all" oder "operator" sein.');
-  const maxRaw = get("INVITATIONS_MAX_ACTIVE");
-  if (maxRaw) {
-    if (!/^\d{1,3}$/.test(maxRaw) || Number(maxRaw) > 100) problems.push("INVITATIONS_MAX_ACTIVE muss eine ganze Zahl von 0 bis 100 sein (0 = Einladungen abgeschaltet).");
-    else invite.maxActive = Number(maxRaw);
+  // --- Hub ---
+  const issuerRaw = required("OIDC_ISSUER", "Adresse des Hubs, z. B. https://anfall.net").replace(/\/+$/, "");
+  let hubOrigin = "";
+  if (issuerRaw) {
+    try {
+      const u = new URL(issuerRaw);
+      if ((u.protocol !== "https:" && u.protocol !== "http:") || u.search || u.hash) throw new Error();
+      hubOrigin = u.origin;
+    } catch {
+      problems.push("OIDC_ISSUER ist keine gültige http(s)-Adresse ohne Parameter.");
+    }
+  }
+  const clientId = get("OIDC_CLIENT_ID") || "subsplit";
+  if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(clientId)) problems.push("OIDC_CLIENT_ID darf nur a-z, 0-9, - und _ enthalten (2 bis 32 Zeichen).");
+  const clientSecret = required("OIDC_CLIENT_SECRET", "das Client-Geheimnis aus dem Dashboard des Hubs");
+  let internalUrl: string | null = null;
+  const internalRaw = get("OIDC_INTERNAL_URL").replace(/\/+$/, "");
+  if (internalRaw) {
+    try {
+      const u = new URL(internalRaw);
+      if ((u.protocol !== "https:" && u.protocol !== "http:") || u.search || u.hash) throw new Error();
+      internalUrl = internalRaw;
+    } catch {
+      problems.push("OIDC_INTERNAL_URL ist keine gültige http(s)-Adresse ohne Parameter.");
+    }
   }
 
   // --- E-Mail (optional) ---
@@ -221,7 +244,7 @@ export function loadConfig(env: Env = process.env): Config {
     migrationsDir: get("MIGRATIONS_DIR") || "./drizzle",
     unusualMonthlyTotalCents,
     unusualFactor,
-    invite,
+    hub: { issuer: issuerRaw, clientId, clientSecret, internalUrl, origin: hubOrigin },
     mail,
     reminders,
   };

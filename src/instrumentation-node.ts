@@ -15,19 +15,23 @@ export async function startup() {
 
   try {
     const handle = initDatabase(config.databasePath, config.migrationsDir, config.dbEncryptionKey);
-    // Ersteinrichtung: gibt es einen Betreiber ohne Passwort, steht ein einmaliger Einrichtungslink im Log.
-    const { ensureOperator, bootstrapSetupToken } = await import("@/lib/services/users");
-    ensureOperator(handle.db);
-    const boot = bootstrapSetupToken(handle.db);
-    if (boot) {
-      console.log(`Ersteinrichtung: Öffne ${config.baseUrl}/setup/${boot.token} (24 Stunden gültig) und lege das Passwort für das Konto "${boot.username}" fest.`);
-    }
+    // Abgelaufene Sitzungen aufräumen (beim Start und danach stündlich)
+    const { purgeExpiredSessions } = await import("@/lib/services/sessions");
+    purgeExpiredSessions(handle.db);
+    setInterval(() => purgeExpiredSessions(handle.db), 60 * 60 * 1000).unref();
   } catch (err) {
     console.error("Datenbank-Initialisierung fehlgeschlagen:", err instanceof Error ? err.message : err);
     process.exit(1);
   }
 
   installPeerHook();
+
+  // Anbindung an den Hub prüfen (nur eine Meldung im Log, der Start hängt nicht davon ab)
+  const { ctx } = await import("@/lib/server/context");
+  ctx().oidc.authorizeUrl({ redirectUri: `${config.baseUrl}/auth/callback`, state: "x", nonce: "x", challenge: "x" }).then(
+    () => console.log(`Hub erreichbar (${config.hub.issuer}), Client-ID ${config.hub.clientId}.`),
+    (err) => console.error(`Hub nicht erreichbar oder falsch konfiguriert: ${err instanceof Error ? err.message : "Fehler"} (Anmeldungen gehen erst, wenn der Hub antwortet.)`),
+  );
 
   // E-Mail-Versand (optional): nur aktiv, wenn SMTP_HOST gesetzt ist.
   if (config.mail) {
@@ -38,6 +42,7 @@ export async function startup() {
     const transport = createSmtpTransport(config.mail);
     const scheduler = startMailScheduler({
       db: getDbHandle().db,
+      hub: ctx().hub,
       transport,
       ctx: { appName: config.appName, baseUrl: config.baseUrl, secret: config.sessionSecret, settings: config.reminders },
     });

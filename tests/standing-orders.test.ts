@@ -6,7 +6,8 @@ import { AppError } from "@/lib/services/errors";
 import { createSubscription, setMembership } from "@/lib/services/manage";
 import { ensureOwnerPayments, setPaidByPayer, setStatusByOwner } from "@/lib/services/payments";
 import { getStandingOrder, setStandingOrder } from "@/lib/services/standing-orders";
-import { createUser, updateRecipient } from "@/lib/services/users";
+import { updateRecipient } from "@/lib/services/users";
+import { createUser } from "./helpers";
 import { getHome, getOwnerOverview, getPayerView } from "@/lib/services/views";
 
 const NOW = new Date("2026-11-04T12:00:00Z"); // 4. November 2026; Fälligkeitstag 1. ist schon vorbei

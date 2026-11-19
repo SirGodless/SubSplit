@@ -1,10 +1,10 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { api, setCsrf } from "@/lib/client/api";
+import { api } from "@/lib/client/api";
 
 interface Initial {
-  username: string; displayName: string; email: string; recipientName: string; paypalMe: string; iban: string; dueDay: number;
+  username: string; email: string; hubAccountUrl: string; recipientName: string; paypalMe: string; iban: string; dueDay: number;
   emailVerified: boolean; remindersEnabled: boolean; priceMailsEnabled: boolean; mailEnabled: boolean;
 }
 type Msg = { kind: "ok" | "err"; text: string } | null;
@@ -15,7 +15,6 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : "Unbekannter F
 export default function SettingsForm({ initial }: { initial: Initial }) {
   const router = useRouter();
   const [profileMsg, setProfileMsg] = useState<Msg>(null);
-  const [pwMsg, setPwMsg] = useState<Msg>(null);
   const [mailMsg, setMailMsg] = useState<Msg>(null);
   const [reminders, setReminders] = useState(initial.remindersEnabled);
   const [priceMails, setPriceMails] = useState(initial.priceMailsEnabled);
@@ -25,29 +24,13 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
     const f = new FormData(e.currentTarget);
     const s = (k: string) => String(f.get(k) ?? "").trim();
     try {
-      const res = await api<{ verificationSent: boolean }>("/api/me/profile", "PATCH", {
-        displayName: s("displayName"), email: s("email") || null,
+      await api("/api/me/profile", "PATCH", {
         recipientName: s("recipientName") || null, paypalMe: s("paypalMe") || null, iban: s("iban") || null, dueDay: Number(s("dueDay")),
       });
-      setProfileMsg({ kind: "ok", text: res.verificationSent ? "Gespeichert. Wir haben dir eine Mail zum Bestätigen deiner Adresse geschickt." : "Gespeichert." });
+      setProfileMsg({ kind: "ok", text: "Gespeichert." });
       router.refresh();
     } catch (err) {
       setProfileMsg({ kind: "err", text: errText(err) });
-    }
-  }
-
-  async function changePassword(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const f = new FormData(form);
-    if (f.get("next") !== f.get("repeat")) return setPwMsg({ kind: "err", text: "Die beiden neuen Passwörter sind nicht gleich." });
-    try {
-      const d = await api<{ csrfToken: string }>("/api/me/password", "POST", { current: f.get("current"), next: f.get("next") });
-      setCsrf(d.csrfToken);
-      form.reset();
-      setPwMsg({ kind: "ok", text: "Passwort geändert. Andere Geräte sind abgemeldet." });
-    } catch (err) {
-      setPwMsg({ kind: "err", text: errText(err) });
     }
   }
 
@@ -76,9 +59,11 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
     <div style={{ paddingTop: 22 }}>
       <form className="stack" onSubmit={saveProfile}>
         <h1 className="h">Profil</h1>
-        <p className="muted" style={{ margin: 0, fontSize: 14 }}>Benutzername: <span className="mono" style={{ color: "var(--text)" }}>{initial.username}</span></p>
-        <label className="f"><span className="label">Anzeigename (für Mitzahler im selben Abo sichtbar)</span><input name="displayName" defaultValue={initial.displayName} required maxLength={60} /></label>
-        <label className="f"><span className="label">E-Mail (optional, nur für dich sichtbar, für Erinnerungen und Infos)</span><input name="email" type="email" autoComplete="email" defaultValue={initial.email} /></label>
+        <p className="muted" style={{ margin: 0, fontSize: 14 }}>
+          Benutzername und E-Mail-Adresse gehören zu deinem Konto im Hub und werden dort geändert.{" "}
+          <a href={initial.hubAccountUrl}>Zum Konto im Hub</a>
+        </p>
+        <p style={{ margin: 0 }}>Benutzername (für Mitzahler sichtbar): <span className="mono">{initial.username}</span></p>
 
         <div className="section" style={{ marginTop: 10 }}>
           <h2 className="h">Zahlungsdaten als Empfänger</h2>
@@ -98,13 +83,8 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
         <h2 className="h">E-Mail-Benachrichtigungen</h2>
         {!initial.mailEnabled ? (
           <p className="muted" style={{ fontSize: 14 }}>Dieser Server verschickt keine E-Mails.</p>
-        ) : !initial.email ? (
-          <p className="muted" style={{ fontSize: 14 }}>Trage oben eine E-Mail-Adresse ein und speichere. Wir schicken dir dann einen Bestätigungslink.</p>
-        ) : !initial.emailVerified ? (
-          <div className="stack">
-            <p style={{ margin: 0 }}><span className="chip chip--marked_paid">Nicht bestätigt</span> <span className="muted" style={{ fontSize: 14 }}>Bis du die Adresse bestätigst, bekommst du keine Erinnerungen oder Infos.</span></p>
-            <div><button type="button" className="btn btn--small" onClick={() => mailAction("/api/me/email/verify", "Bestätigungsmail geschickt. Schau auch im Spam-Ordner nach.")}>Bestätigungsmail erneut senden</button></div>
-          </div>
+        ) : !initial.email || !initial.emailVerified ? (
+          <p className="muted" style={{ fontSize: 14 }}>Für Erinnerungen und Infos braucht dein Konto im Hub eine bestätigte E-Mail-Adresse. Die verwaltest du dort.</p>
         ) : (
           <div className="stack">
             <p style={{ margin: 0 }}><span className="chip chip--confirmed">Bestätigt</span></p>
@@ -122,14 +102,6 @@ export default function SettingsForm({ initial }: { initial: Initial }) {
         {mailMsg && <div style={{ marginTop: 14 }}>{note(mailMsg)}</div>}
       </div>
 
-      <form className="stack section" onSubmit={changePassword} style={{ marginTop: 34 }}>
-        <h2 className="h">Passwort ändern</h2>
-        <label className="f"><span className="label">Aktuelles Passwort</span><input name="current" type="password" autoComplete="current-password" required /></label>
-        <label className="f"><span className="label">Neues Passwort (mindestens 12 Zeichen)</span><input name="next" type="password" autoComplete="new-password" minLength={12} required /></label>
-        <label className="f"><span className="label">Neues Passwort wiederholen</span><input name="repeat" type="password" autoComplete="new-password" minLength={12} required /></label>
-        {note(pwMsg)}
-        <button className="btn">Passwort ändern</button>
-      </form>
     </div>
   );
 }

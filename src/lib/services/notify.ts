@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db/client";
-import { standingOrders, users } from "@/db/schema";
+import { standingOrders } from "@/db/schema";
+import { identityOf } from "@/lib/hub/identity";
+import { users } from "@/db/schema";
 import { priceChangeMail } from "@/lib/mail/templates";
 import { unsubscribeLinks, type MailCtx } from "./email";
 import { enqueueMail } from "./mail";
@@ -31,21 +33,23 @@ export function setPriceAndNotify(
   const oldSub = before.subscriptions.find((s) => s.subscriptionId === subscriptionId);
   const newSub = after.subscriptions.find((s) => s.subscriptionId === subscriptionId);
   if (!newSub || (oldSub && oldSub.priceCents === newSub.priceCents)) return 0;
-  const owner = db.select({ displayName: users.displayName }).from(users).where(eq(users.id, ownerId)).get();
+  const owner = identityOf(ownerId);
   if (!owner) return 0;
 
   let queued = 0;
   for (const line of newSub.lines) {
     if (line.participantId === ownerId) continue;
-    const u = db.select().from(users).where(eq(users.id, line.participantId)).get();
-    if (!u || u.disabledAt || !u.email || !u.emailVerifiedAt || !u.priceMailsEnabled) continue;
+    const local = db.select().from(users).where(eq(users.id, line.participantId)).get();
+    const hubUser = identityOf(line.participantId);
+    if (!local || !hubUser || hubUser.banned || !hubUser.access || !hubUser.email || !hubUser.emailVerified || !local.priceMailsEnabled) continue;
+    const u = { id: local.id, name: hubUser.username, email: hubUser.email };
     const oldLine = oldSub?.lines.find((l) => l.participantId === u.id);
     const hasOrder = !!db.select({ id: standingOrders.id }).from(standingOrders).where(and(eq(standingOrders.payerUserId, u.id), eq(standingOrders.recipientUserId, ownerId))).get();
     const links = unsubscribeLinks(ctx, u.id, "prices");
     const m = priceChangeMail({
       appName: ctx.appName,
-      name: u.displayName,
-      ownerName: owner.displayName,
+      name: u.name,
+      ownerName: owner.username,
       subscriptionName: sub.name,
       month,
       oldPriceCents: oldSub?.priceCents ?? null,

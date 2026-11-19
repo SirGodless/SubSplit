@@ -1,4 +1,6 @@
 import type { Db } from "@/db/client";
+import type { HubApi } from "@/lib/hub/client";
+import { refreshIdentities } from "@/lib/hub/identity";
 import type { ReminderSettings } from "@/lib/config";
 import type { MailCtx } from "@/lib/services/email";
 import { processOutbox, purgeOldMail } from "@/lib/services/mail";
@@ -12,13 +14,14 @@ const TICK_MS = 15 * 60 * 1000;
  * nachziehen und den Postausgang abarbeiten. Läuft nie doppelt gleichzeitig. Fehler werden ohne Details geloggt
  * (keine Adressen, keine Inhalte).
  */
-export function startMailScheduler(opts: { db: Db; transport: MailTransport; ctx: MailCtx & { settings: ReminderSettings } }): { stop: () => void; kick: () => void } {
+export function startMailScheduler(opts: { db: Db; hub: HubApi; transport: MailTransport; ctx: MailCtx & { settings: ReminderSettings } }): { stop: () => void; kick: () => void } {
   let running = false;
 
   const run = async (full: boolean) => {
     if (running) return;
     running = true;
     try {
+      await refreshIdentities(opts.db, opts.hub); // Adressen, Sperren und Zugang liegen beim Hub
       if (full) {
         enqueueDueReminders(opts.db, opts.ctx);
         purgeOldMail(opts.db);

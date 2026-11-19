@@ -1,21 +1,16 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { openDatabase, runMigrations, type Db } from "@/db/client";
-import { emailVerifications, mailOutbox, users } from "@/db/schema";
+import { mailOutbox, users } from "@/db/schema";
 import type { MailTransport, OutgoingMail } from "@/lib/mail/transport";
-import type { SecurityLogger } from "@/lib/security/security-log";
 import { AppError } from "@/lib/services/errors";
-import {
-  applyUnsubscribe, confirmEmailVerification, peekEmailVerification, requestTestMail, setNotificationPrefs, startEmailVerification, unsubscribeLinks, type MailCtx,
-} from "@/lib/services/email";
+import { applyUnsubscribe, requestTestMail, setNotificationPrefs, unsubscribeLinks, type MailCtx } from "@/lib/services/email";
 import { BACKOFF_MINUTES, enqueueMail, MAX_ATTEMPTS, processOutbox, purgeOldMail, safeError } from "@/lib/services/mail";
-import { createUser, setDisabled, updateProfile } from "@/lib/services/users";
+import { createUser, hubChange, setBanned } from "./helpers";
 
 const NOW = new Date("2026-11-04T10:00:00Z");
 const CTX: MailCtx = { appName: "SubSplit", baseUrl: "https://abos.example.org", secret: "s".repeat(40) };
 let db: Db;
-let calls: string[];
-const logger: SecurityLogger = { authFail: (ip, r) => calls.push(`FAIL ${ip} ${r}`), notice: (ip, r) => calls.push(`NOTICE ${ip} ${r}`) };
 
 class FakeTransport implements MailTransport {
   sent: OutgoingMail[] = [];
@@ -30,14 +25,13 @@ class FakeTransport implements MailTransport {
 let anna: number;
 const mins = (n: number, from = NOW) => new Date(from.getTime() + n * 60_000);
 const outbox = () => db.select().from(mailOutbox).all();
-const verified = (id: number, email: string) => db.update(users).set({ email, emailVerifiedAt: NOW.toISOString() }).where(eq(users.id, id)).run();
+const verified = (id: number, email: string) => hubChange(id, { email, emailVerified: true });
 
 beforeEach(() => {
   const h = openDatabase(":memory:");
   runMigrations(h, "./drizzle");
   db = h.db;
-  calls = [];
-  anna = createUser(db, { username: "anna", displayName: "Anna" });
+  anna = createUser(db, { username: "anna" });
 });
 
 describe("Postausgang", () => {
@@ -82,7 +76,7 @@ describe("Postausgang", () => {
     verified(anna, "anna@example.org");
     const t = new FakeTransport();
     const q = (type: "reminder" | "price_change", key: string) => enqueueMail(db, { toUserId: anna, toAddress: "anna@example.org", type, dedupeKey: key, subject: "S", bodyText: "T" }, NOW);
-    q("price_change", "a"); updateProfile(db, anna, { email: "neu@example.org" }); // Adresse geändert -> nicht mehr bestätigt
+    q("price_change", "a"); hubChange(anna, { email: "neu@example.org", emailVerified: false }); // Adresse im Hub geändert -> nicht mehr bestätigt
     expect((await processOutbox(db, t, NOW)).failed).toBe(1);
     expect(outbox()[0]!.lastError).toMatch(/nicht mehr bestätigt/);
     verified(anna, "anna@example.org");
@@ -91,8 +85,7 @@ describe("Postausgang", () => {
     expect((await processOutbox(db, t, NOW)).failed).toBe(2);
     setNotificationPrefs(db, anna, { remindersEnabled: true, priceMailsEnabled: true });
     q("reminder", "d");
-    const op = createUser(db, { username: "chef", displayName: "Chef", role: "operator" });
-    setDisabled(db, anna, true, op, NOW);
+    setBanned(anna, true);
     expect((await processOutbox(db, t, NOW)).failed).toBe(1);
     expect(t.sent).toEqual([]);
   });
@@ -107,66 +100,10 @@ describe("Postausgang", () => {
   });
 });
 
-describe("E-Mail-Adresse bestätigen", () => {
-  it("Ablauf: Link per Mail, einmalig gültig, danach ist die Adresse bestätigt", async () => {
-    updateProfile(db, anna, { email: "anna@example.org" });
-    startEmailVerification(db, CTX, anna, NOW);
-    const t = new FakeTransport();
-    await processOutbox(db, t, NOW);
-    expect(t.sent[0]!.to).toBe("anna@example.org"); // Bestätigungsmail geht auch an die noch unbestätigte Adresse
-    const token = /\/verify-email\/([A-Za-z0-9_-]{43})/.exec(t.sent[0]!.text)![1]!;
-    expect(db.select().from(users).where(eq(users.id, anna)).get()!.emailVerifiedAt).toBeNull();
-    expect(peekEmailVerification(db, token, "1.2.3.4", logger, NOW)).toBe(true);
-    confirmEmailVerification(db, token, NOW);
-    expect(db.select().from(users).where(eq(users.id, anna)).get()!.emailVerifiedAt).toBe(NOW.toISOString());
-    expect(() => confirmEmailVerification(db, token, NOW)).toThrow(/ungültig oder abgelaufen/);
-    expect(peekEmailVerification(db, token, "1.2.3.4", logger, NOW)).toBe(false);
-    expect(calls).toEqual(["NOTICE 1.2.3.4 revoked_token"]); // benutzt: kein Ban
-    expect(db.select().from(emailVerifications).all()[0]!.tokenHash).not.toContain(token); // nur als Hash gespeichert
-  });
-  it("unbekannter Link -> AUTHFAIL ohne Token im Log; abgelaufener Link -> NOTICE; ungültig beim Bestätigen", () => {
-    updateProfile(db, anna, { email: "anna@example.org" });
-    expect(peekEmailVerification(db, "A".repeat(43), "1.2.3.4", logger, NOW)).toBe(false);
-    expect(calls).toEqual(["FAIL 1.2.3.4 invalid_token"]);
-    startEmailVerification(db, CTX, anna, NOW);
-    const token = /\/verify-email\/(\S+)/.exec(outbox()[0]!.bodyText)![1]!;
-    const later = new Date(NOW.getTime() + 49 * 3600 * 1000);
-    expect(peekEmailVerification(db, token, "1.2.3.4", logger, later)).toBe(false);
-    expect(() => confirmEmailVerification(db, token, later)).toThrow(AppError);
-    expect(calls[1]).toBe("NOTICE 1.2.3.4 revoked_token");
-  });
-  it("wurde die Adresse inzwischen geändert, bestätigt der alte Link nichts", () => {
-    updateProfile(db, anna, { email: "alt@example.org" });
-    startEmailVerification(db, CTX, anna, NOW);
-    const token = /\/verify-email\/(\S+)/.exec(outbox()[0]!.bodyText)![1]!;
-    updateProfile(db, anna, { email: "neu@example.org" });
-    expect(() => confirmEmailVerification(db, token, NOW)).toThrow(AppError);
-    expect(db.select().from(users).where(eq(users.id, anna)).get()!.emailVerifiedAt).toBeNull();
-  });
-  it("Adresswechsel setzt die Bestätigung zurück, gleiche Adresse nicht", () => {
-    verified(anna, "anna@example.org");
-    updateProfile(db, anna, { email: "anna@example.org", displayName: "Anna M." });
-    expect(db.select().from(users).where(eq(users.id, anna)).get()!.emailVerifiedAt).not.toBeNull();
-    updateProfile(db, anna, { email: "andere@example.org" });
-    expect(db.select().from(users).where(eq(users.id, anna)).get()).toMatchObject({ email: "andere@example.org", emailVerifiedAt: null });
-    updateProfile(db, anna, { email: null });
-    expect(db.select().from(users).where(eq(users.id, anna)).get()!.email).toBeNull();
-  });
-  it("ohne Adresse oder schon bestätigt: Fehler; höchstens 3 Bestätigungsmails pro Stunde", () => {
-    expect(() => startEmailVerification(db, CTX, anna, NOW)).toThrow(/keine E-Mail-Adresse/);
-    updateProfile(db, anna, { email: "anna@example.org" });
-    for (let i = 0; i < 3; i++) startEmailVerification(db, CTX, anna, NOW);
-    expect(() => startEmailVerification(db, CTX, anna, NOW)).toThrow(/mehrere Bestätigungsmails/);
-    startEmailVerification(db, CTX, anna, new Date(NOW.getTime() + 61 * 60_000)); // nach einer Stunde wieder möglich
-    verified(anna, "anna@example.org");
-    expect(() => startEmailVerification(db, CTX, anna, NOW)).toThrow(/schon bestätigt/);
-  });
-});
-
 describe("Test-Mail, Einstellungen, Abmelden", () => {
   it("Test-Mail nur an bestätigte Adresse, höchstens 3 pro Stunde", () => {
-    expect(() => requestTestMail(db, CTX, anna, NOW)).toThrow(/eintragen und bestätigen/);
-    updateProfile(db, anna, { email: "anna@example.org" });
+    expect(() => requestTestMail(db, CTX, anna, NOW)).toThrow(/bestätigte E-Mail-Adresse/);
+    hubChange(anna, { email: "anna@example.org", emailVerified: false });
     expect(() => requestTestMail(db, CTX, anna, NOW)).toThrow(AppError);
     verified(anna, "anna@example.org");
     for (let i = 0; i < 3; i++) requestTestMail(db, CTX, anna, NOW);

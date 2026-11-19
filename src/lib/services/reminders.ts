@@ -1,6 +1,7 @@
 import { and, asc, eq, like, lte } from "drizzle-orm";
 import type { Db } from "@/db/client";
 import { mailOutbox, payments, standingOrders, users } from "@/db/schema";
+import { identityOf } from "@/lib/hub/identity";
 import type { ReminderSettings } from "@/lib/config";
 import { addDays, berlinDate, currentMonth, dueDateOf, inSendWindow } from "@/lib/billing/month";
 import { reminderMail } from "@/lib/mail/templates";
@@ -50,7 +51,9 @@ export function enqueueDueReminders(db: Db, ctx: MailCtx & { settings: ReminderS
     const trigger = rows[rows.length - 1]!;
     const payer = getUser(trigger.payerUserId);
     const owner = getUser(trigger.recipientUserId);
-    if (!payer || !owner || payer.disabledAt || !payer.email || !payer.emailVerifiedAt || !payer.remindersEnabled) continue;
+    const payerHub = payer ? identityOf(payer.id) : undefined;
+    const ownerHub = owner ? identityOf(owner.id) : undefined;
+    if (!payer || !owner || !payerHub || !ownerHub || payerHub.banned || !payerHub.access || !payerHub.email || !payerHub.emailVerified || !payer.remindersEnabled) continue;
 
     const due = dueDateOf(trigger.month, owner.dueDay);
     if (today < addDays(due, ctx.settings.firstDaysAfterDue)) continue;
@@ -67,8 +70,8 @@ export function enqueueDueReminders(db: Db, ctx: MailCtx & { settings: ReminderS
     const links = unsubscribeLinks(ctx, payer.id, "reminders");
     const m = reminderMail({
       appName: ctx.appName,
-      name: payer.displayName,
-      recipientName: owner.displayName,
+      name: payerHub.username,
+      recipientName: ownerHub.username,
       totalCents: rows.reduce((s, r) => s + r.amountCents, 0),
       items: rows.map((r) => ({ month: r.month, amountCents: r.amountCents })),
       referenceId: trigger.referenceId,
@@ -78,7 +81,7 @@ export function enqueueDueReminders(db: Db, ctx: MailCtx & { settings: ReminderS
     });
     const id = enqueueMail(
       db,
-      { toUserId: payer.id, toAddress: payer.email, type: "reminder", dedupeKey: `reminder:${trigger.id}:${sent.length + 1}`, subject: m.subject, bodyText: m.text, unsubscribeUrl: links.oneClick },
+      { toUserId: payer.id, toAddress: payerHub.email, type: "reminder", dedupeKey: `reminder:${trigger.id}:${sent.length + 1}`, subject: m.subject, bodyText: m.text, unsubscribeUrl: links.oneClick },
       now,
     );
     if (id !== null) queued++;

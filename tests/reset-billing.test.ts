@@ -7,7 +7,8 @@ import { openDatabase, runMigrations } from "@/db/client";
 import { memberships, payments, subscriptions, users } from "@/db/schema";
 import { createSubscription, setMembership } from "@/lib/services/manage";
 import { ensureOwnerPayments } from "@/lib/services/payments";
-import { createUser, updateRecipient } from "@/lib/services/users";
+import { updateRecipient } from "@/lib/services/users";
+import { createUser } from "./helpers";
 
 const KEY = "k".repeat(40);
 let dir = "";
@@ -38,8 +39,8 @@ describe("scripts/reset-billing.mjs", () => {
     expect(h2.db.select().from(memberships).all()).toHaveLength(0);
     expect(h2.db.select().from(subscriptions).all()).toHaveLength(0);
     const u = h2.db.select().from(users).all();
-    expect(u.map((x) => x.username).sort()).toEqual(["anna", "boss"]);
-    expect(u.find((x) => x.username === "boss")?.iban).toBeTruthy();
+    expect(u).toHaveLength(2);
+    expect(u.find((x) => x.iban)?.iban).toBeTruthy();
     h2.sqlite.close();
     expect(readdirSync(join(dir, "backups")).some((f) => f.startsWith("vor-reset-"))).toBe(true);
   });
