@@ -15,7 +15,7 @@ export function formatPercent(p: number): string {
 
 export function formatDueDate(month: string, dueDay: number): string {
   const [y, m] = month.split("-").map(Number) as [number, number];
-  return `${String(dueDay).padStart(2, "0")}.${String(m).padStart(2, "0")}.${y}`;
+  return `${y}-${String(m).padStart(2, "0")}-${String(dueDay).padStart(2, "0")}`;
 }
 
 export const STATUS_LABEL = { open: "Offen", marked_paid: "Als bezahlt gemeldet", confirmed: "Bestätigt" } as const;
