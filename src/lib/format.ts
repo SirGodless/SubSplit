@@ -30,7 +30,7 @@ export function parseEuro(input: string): number | null {
 /** "2026-11-01" -> "01.11.2026". */
 export function formatDate(iso: string): string {
   const [y, m, d] = iso.split("-");
-  return `${d}.${m}.${y}`;
+  return `${y}-${m}-${d}`;
 }
 
 export const VOLUME_LABEL = { none: "–", lt100: "unter 100 €", "100to300": "100–300 €", "300to1000": "300–1.000 €", gt1000: "über 1.000 €" } as const;

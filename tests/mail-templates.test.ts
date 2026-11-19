@@ -14,7 +14,7 @@ describe("Mail-Texte", () => {
       referenceId: "K7M2QX", dueDate: "2026-11-01", payLink: "https://abos.example.org/pay/1", unsubscribeUrl: "https://abos.example.org/unsubscribe/xyz",
     }));
     expect(m.subject).toBe("Erinnerung: 13,32 € an Joshua noch offen");
-    for (const part of ["Hallo Anna", "13,32", "01.11.2026", "K7M2QX", "https://abos.example.org/pay/1", "Oktober 2026: 6,66", "November 2026: 6,66", "https://abos.example.org/unsubscribe/xyz", "Antworten auf diese Adresse werden nicht gelesen"])
+    for (const part of ["Hallo Anna", "13,32", "2026-11-01", "K7M2QX", "https://abos.example.org/pay/1", "Oktober 2026: 6,66", "November 2026: 6,66", "https://abos.example.org/unsubscribe/xyz", "Antworten auf diese Adresse werden nicht gelesen"])
       expect(m.text, part).toContain(part);
     expect(m.text).not.toMatch(/IBAN|paypal\.me|DE\d{2}\s?\d{4}/i);
   });
