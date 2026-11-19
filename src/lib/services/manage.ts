@@ -1,6 +1,7 @@
 import { and, eq, gt, gte, lt, or, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/db/client";
 import { memberships, payments, subscriptionPrices, subscriptions, users } from "@/db/schema";
+import { identityOf } from "@/lib/hub/identity";
 import { addMonths, assertMonth, currentMonth, type Month } from "@/lib/billing/month";
 import { AppError } from "./errors";
 import { firstStartMonthForNew, nextChangeMonth, refreshOpenPayments } from "./payments";
@@ -88,9 +89,11 @@ function clearFrom(tx: Db, subscriptionId: number, userId: number, from: Month):
     .run();
 }
 
+/** Mitzahler können nur Konten sein, die der Hub kennt, nicht gesperrt hat und die SubSplit nutzen dürfen. */
 function assertUserSelectable(db: Db, userId: number): void {
-  const u = db.select({ disabledAt: users.disabledAt }).from(users).where(eq(users.id, userId)).get();
-  if (!u || u.disabledAt) throw new AppError("not_found", "Konto nicht gefunden.");
+  const u = db.select({ id: users.id }).from(users).where(eq(users.id, userId)).get();
+  const id = identityOf(userId);
+  if (!u || !id || id.banned || !id.access) throw new AppError("not_found", "Konto nicht gefunden.");
 }
 
 /**

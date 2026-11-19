@@ -1,6 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db/client";
-import { memberships, subscriptionPrices, subscriptions, users } from "@/db/schema";
+import { memberships, subscriptionPrices, subscriptions } from "@/db/schema";
+import { displayNameOf } from "@/lib/hub/identity";
 import type { ParticipantInput, SubscriptionInput } from "@/lib/billing/compute";
 
 /**
@@ -14,7 +15,7 @@ export function loadBillingInput(db: Db, ownerId: number): { subscriptions: Subs
   const prices = db.select().from(subscriptionPrices).where(inArray(subscriptionPrices.subscriptionId, ids)).all();
   const ms = db.select().from(memberships).where(inArray(memberships.subscriptionId, ids)).all();
   const userIds = [...new Set([ownerId, ...ms.map((m) => m.userId)])];
-  const ps = db.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, userIds)).all();
+  const ps = userIds.map((id) => ({ id, displayName: displayNameOf(id) }));
   return {
     subscriptions: subs.map((s) => ({
       id: s.id,

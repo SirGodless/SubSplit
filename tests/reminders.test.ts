@@ -12,7 +12,8 @@ import { ensureOwnerPayments, setPaidByPayer, setStatusByOwner } from "@/lib/ser
 import { enqueueDueReminders } from "@/lib/services/reminders";
 import { setPriceAndNotify } from "@/lib/services/notify";
 import { setStandingOrder } from "@/lib/services/standing-orders";
-import { createUser, setDisabled, updateRecipient } from "@/lib/services/users";
+import { updateRecipient } from "@/lib/services/users";
+import { createUser, hubChange, setBanned } from "./helpers";
 
 const M = "2026-11";
 const CTX: MailCtx & { settings: ReminderSettings } = { appName: "SubSplit", baseUrl: "https://abos.example.org", secret: "s".repeat(40), settings: { firstDaysAfterDue: 3, repeatDays: 7, maxPerPayment: 3 } };
@@ -28,7 +29,7 @@ class Fake implements MailTransport {
   async verify() {}
 }
 const reminders = () => db.select().from(mailOutbox).all().filter((m) => m.type === "reminder");
-const verify = (id: number, email: string) => db.update(users).set({ email, emailVerifiedAt: SETUP.toISOString() }).where(eq(users.id, id)).run();
+const verify = (id: number, email: string) => hubChange(id, { email, emailVerified: true });
 const run = (now: Date, settings = CTX.settings) => enqueueDueReminders(db, { ...CTX, settings }, now);
 
 beforeEach(() => {
@@ -103,14 +104,13 @@ describe("Wer keine Mail bekommt", () => {
   it("ohne bestätigte Adresse, bei abgeschalteten Erinnerungen, bei gesperrtem Konto", () => {
     expect(run(at(4))).toBe(1); // nur Anna (Bob hat keine Adresse)
     expect(reminders()).toHaveLength(1);
-    db.update(users).set({ email: "bob@example.org" }).where(eq(users.id, bob)).run(); // eingetragen, aber nicht bestätigt
+    hubChange(bob, { email: "bob@example.org", emailVerified: false }); // eingetragen, aber nicht bestätigt
     expect(run(at(4, 12))).toBe(0);
     verify(bob, "bob@example.org");
     db.update(users).set({ remindersEnabled: false }).where(eq(users.id, bob)).run();
     expect(run(at(4, 13))).toBe(0);
     db.update(users).set({ remindersEnabled: true }).where(eq(users.id, bob)).run();
-    const op = createUser(db, { username: "chef", displayName: "Chef", role: "operator" });
-    setDisabled(db, bob, true, op, at(4));
+    setBanned(bob, true);
     expect(run(at(4, 14))).toBe(0);
   });
   it("bezahlt gemeldet oder bestätigt: keine Erinnerung", () => {
@@ -162,7 +162,7 @@ describe("Inhalt und Rückstand", () => {
 describe("Preisänderungs-Mails", () => {
   const NEXT = "2026-12";
   beforeEach(() => {
-    db.update(users).set({ email: "bob@example.org" }).where(eq(users.id, bob)).run(); // Bob: Adresse nicht bestätigt
+    hubChange(bob, { email: "bob@example.org", emailVerified: false }); // Bob: Adresse nicht bestätigt
   });
   it("nur an bestätigte Mitzahler des Abos (nie an den Empfänger selbst), mit alten und neuen Werten", async () => {
     const n = setPriceAndNotify(db, CTX, boss, netflix, NEXT, 2000, at(4));

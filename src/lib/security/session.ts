@@ -1,50 +1,14 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { safeEqual } from "./tokens";
 
+/** Cookies der Anmeldung. Die Sitzung selbst steht in der Datenbank (services/sessions.ts), im Cookie nur ein zufälliger Wert. */
+
 export const SESSION_COOKIE = "subsplit_session";
-/** Inaktivitäts-Timeout: Jede gültige Admin-Anfrage verlängert die Sitzung um diese Zeit. */
+/** Merkt sich während der Weiterleitung zum Hub: state, nonce, PKCE-Verifier und das Ziel danach. Kurz gültig. */
+export const OIDC_COOKIE = "subsplit_oidc";
+export const OIDC_COOKIE_SECONDS = 10 * 60;
+/** Inaktivitäts-Timeout: Jede gültige Anfrage verlängert die Sitzung um diese Zeit. */
 export const DEFAULT_IDLE_SECONDS = 30 * 60;
-
-export interface SessionPayload {
-  /** Konto-ID. */
-  uid: number;
-  /** Sitzungsversion des Kontos; Passwortwechsel/Sperre erhöht sie und beendet alle Sitzungen. */
-  sv: number;
-  exp: number; // Unix-Sekunden, Ablauf bei Inaktivität
-  csrf: string;
-}
-
-function sign(data: string, secret: string): string {
-  return createHmac("sha256", secret).update(data).digest("base64url");
-}
-
-function encode(payload: SessionPayload, secret: string): string {
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${body}.${sign(body, secret)}`;
-}
-
-export function createSession(secret: string, user: { uid: number; sv: number }, now = Date.now(), idleSeconds = DEFAULT_IDLE_SECONDS): { value: string; payload: SessionPayload } {
-  const payload: SessionPayload = { uid: user.uid, sv: user.sv, exp: Math.floor(now / 1000) + idleSeconds, csrf: randomBytes(24).toString("base64url") };
-  return { value: encode(payload, secret), payload };
-}
-
-/** Gleitende Sitzung: gleiches CSRF-Token, Ablauf neu auf jetzt + Inaktivitäts-Timeout. */
-export function refreshSession(payload: SessionPayload, secret: string, now = Date.now(), idleSeconds = DEFAULT_IDLE_SECONDS): string {
-  return encode({ uid: payload.uid, sv: payload.sv, exp: Math.floor(now / 1000) + idleSeconds, csrf: payload.csrf }, secret);
-}
-
-export function verifySession(value: string | undefined, secret: string, now = Date.now()): SessionPayload | null {
-  if (!value) return null;
-  const [body, sig, ...rest] = value.split(".");
-  if (!body || !sig || rest.length > 0 || !safeEqual(sig, sign(body, secret))) return null;
-  try {
-    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as SessionPayload;
-    if (typeof payload.exp !== "number" || typeof payload.csrf !== "string" || !Number.isInteger(payload.uid) || !Number.isInteger(payload.sv)) return null;
-    return payload.exp * 1000 > now ? payload : null;
-  } catch {
-    return null;
-  }
-}
 
 export function sessionCookie(value: string, secure: boolean, maxAgeSeconds = DEFAULT_IDLE_SECONDS): string {
   return [`${SESSION_COOKIE}=${value}`, "Path=/", "HttpOnly", "SameSite=Strict", `Max-Age=${maxAgeSeconds}`, ...(secure ? ["Secure"] : [])].join("; ");
@@ -52,4 +16,40 @@ export function sessionCookie(value: string, secure: boolean, maxAgeSeconds = DE
 
 export function clearSessionCookie(secure: boolean): string {
   return [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=0", ...(secure ? ["Secure"] : [])].join("; ");
+}
+
+// ---------- Cookie der Weiterleitung zum Hub ----------
+
+export interface OidcFlowState {
+  state: string;
+  nonce: string;
+  verifier: string;
+  /** Ziel innerhalb der App nach der Anmeldung. */
+  next: string | null;
+  exp: number; // Unix-Sekunden
+}
+
+const sign = (data: string, secret: string) => createHmac("sha256", secret).update(`oidc:${data}`).digest("base64url");
+
+/** Signiert, damit niemand state oder nonce unterschieben kann. SameSite=Lax, weil der Hub mit einer Weiterleitung zurückkommt. */
+export function oidcCookie(flow: Omit<OidcFlowState, "exp">, secret: string, secure: boolean, now = Date.now()): string {
+  const body = Buffer.from(JSON.stringify({ ...flow, exp: Math.floor(now / 1000) + OIDC_COOKIE_SECONDS })).toString("base64url");
+  return [`${OIDC_COOKIE}=${body}.${sign(body, secret)}`, "Path=/auth", "HttpOnly", "SameSite=Lax", `Max-Age=${OIDC_COOKIE_SECONDS}`, ...(secure ? ["Secure"] : [])].join("; ");
+}
+
+export function clearOidcCookie(secure: boolean): string {
+  return [`${OIDC_COOKIE}=`, "Path=/auth", "HttpOnly", "SameSite=Lax", "Max-Age=0", ...(secure ? ["Secure"] : [])].join("; ");
+}
+
+export function readOidcCookie(value: string | undefined, secret: string, now = Date.now()): OidcFlowState | null {
+  if (!value) return null;
+  const [body, sig, ...rest] = value.split(".");
+  if (!body || !sig || rest.length > 0 || !safeEqual(sig, sign(body, secret))) return null;
+  try {
+    const flow = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as OidcFlowState;
+    const ok = typeof flow.state === "string" && typeof flow.nonce === "string" && typeof flow.verifier === "string" && typeof flow.exp === "number";
+    return ok && flow.exp * 1000 > now ? flow : null;
+  } catch {
+    return null;
+  }
 }

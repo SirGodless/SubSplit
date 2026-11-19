@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { getPageUser } from "@/lib/server/auth";
+import { ctx } from "@/lib/server/context";
 import OperatorApp from "./OperatorApp";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ export default async function OperatorPage() {
   return (
     <AppShell user={auth.user} active="/operator">
       <main className="shell shell--wide" style={{ paddingTop: 22 }}>
-        <OperatorApp selfId={auth.user.id} />
+        <OperatorApp hubUrl={ctx().config.hub.origin} />
       </main>
     </AppShell>
   );

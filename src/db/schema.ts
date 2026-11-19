@@ -6,28 +6,20 @@ const MONTH_RE = "'____-__'";
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
 /**
- * Jeder ist ein Konto. Ein Konto kann Empfänger sein (Abos besitzen, Zahlungsdaten hinterlegen) und/oder
- * Mitzahler in Abos anderer. Die Empfängerdaten sind alle optional; zum Anlegen von Abos braucht es mindestens
- * IBAN oder PayPal.Me.
+ * Lokale Daten zu einem Konto des Hubs (AuthenticationService). Das Konto selbst (Benutzername, Name, E-Mail, Passwort,
+ * Sperre, Rechte) verwaltet allein der Hub. SubSplit kennt nur die Kennung `sub` (UUID) und speichert daran die eigenen
+ * Daten: Empfängerdaten, Fälligkeitstag, Mail-Einstellungen. Namen und Adressen werden beim Hub abgefragt.
+ *
+ * Ein Konto kann Empfänger sein (Abos besitzen, Zahlungsdaten hinterlegen) und/oder Mitzahler in Abos anderer. Die
+ * Empfängerdaten sind alle optional; zum Anlegen von Abos braucht es mindestens IBAN oder PayPal.Me.
  */
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  /** Kleingeschrieben, eindeutig, für das Login. */
-  username: text("username").notNull().unique(),
-  /** Für Mitzahler im selben Abo sichtbar. */
-  displayName: text("display_name").notNull(),
-  email: text("email"),
-  /** Erst nach Bestätigung der Adresse bekommt sie E-Mails (außer der Bestätigungsmail selbst). */
-  emailVerifiedAt: text("email_verified_at"),
-  role: text("role", { enum: ["operator", "user"] }).notNull().default("user"),
-  /** null = Konto noch nicht eingerichtet (Einrichtungslink offen). */
-  passwordHash: text("password_hash"),
-  /** Wird bei Passwortwechsel/Sperre erhöht und macht bestehende Sitzungen ungültig. */
-  sessionVersion: integer("session_version").notNull().default(0),
-  /** SHA-256 des Einrichtungslinks (Erst-Einrichtung bzw. Passwort-Reset), nur als Hash gespeichert. */
-  setupTokenHash: text("setup_token_hash").unique(),
-  setupExpiresAt: text("setup_expires_at"),
-  disabledAt: text("disabled_at"),
+  /** Kennung im Hub (UUID, Claim sub). Null nur bei Konten aus der Zeit vor dem Hub, die noch nicht verknüpft sind. */
+  sub: text("sub").unique(),
+  /** Benutzername und Name aus der Zeit vor dem Hub. Nur zum Wiederfinden beim Verknüpfen (scripts/link-user.mjs), danach leer. */
+  legacyUsername: text("legacy_username"),
+  legacyDisplayName: text("legacy_display_name"),
   // --- Empfängerdaten (alle optional) ---
   recipientName: text("recipient_name"),
   paypalMe: text("paypal_me"),
@@ -42,19 +34,26 @@ export const users = sqliteTable("users", {
 }, (t) => [check("users_due_day_ck", sql`${t.dueDay} BETWEEN 1 AND 28`)]);
 
 /**
- * Einladungslinks zum Erstellen eines eigenen Kontos. Jedes Konto kann sie erzeugen (höchstens 5 offene gleichzeitig,
- * je 7 Tage gültig). Der Token wird nur als Hash gespeichert; den Link sieht der Ersteller nur beim Erzeugen.
+ * Anmeldesitzungen. Der Browser bekommt einen zufälligen Wert im Cookie, in der Datenbank steht nur dessen Hash.
+ * `hubSid` ist die Sitzung im Hub, aus der diese stammt: Meldet sich jemand dort ab, schickt der Hub ein Logout-Token
+ * (Back-Channel-Logout) mit dieser Kennung und die Sitzung wird hier gelöscht.
  */
-export const invitations = sqliteTable("invitations", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  creatorUserId: integer("creator_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  tokenHash: text("token_hash").notNull().unique(),
+export const sessions = sqliteTable("sessions", {
+  idHash: text("id_hash").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  hubSid: text("hub_sid"),
+  /** Schutz gegen Fälschung von Formularen (Header x-csrf-token). */
+  csrf: text("csrf").notNull(),
+  /** Refresh-Token des Hubs. Mit ihm wird alle paar Minuten geprüft, ob der Zugang noch besteht (Bann, entzogenes Recht). */
+  refreshToken: text("refresh_token"),
+  /** Hat das Konto laut Hub das Recht subsplit.operator? Wird bei jeder Prüfung neu gelesen. */
+  operator: integer("operator", { mode: "boolean" }).notNull().default(false),
+  /** Wann der Zugang beim Hub das nächste Mal geprüft wird. */
+  checkAt: text("check_at").notNull(),
+  /** Ablauf bei Inaktivität (gleitend). */
   expiresAt: text("expires_at").notNull(),
-  consumedAt: text("consumed_at"),
-  consumedByUserId: integer("consumed_by_user_id").references(() => users.id, { onDelete: "set null" }),
-  revokedAt: text("revoked_at"),
   createdAt: text("created_at").notNull().default(now),
-}, (t) => [index("invitations_creator_idx").on(t.creatorUserId)]);
+}, (t) => [index("sessions_user_idx").on(t.userId), index("sessions_hub_sid_idx").on(t.hubSid)]);
 
 export const subscriptions = sqliteTable("subscriptions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -147,23 +146,6 @@ export const standingOrders = sqliteTable(
     check("standing_orders_month_ck", sql`${t.fromMonth} LIKE ${sql.raw(MONTH_RE)}`),
     check("standing_orders_not_self_ck", sql`${t.payerUserId} <> ${t.recipientUserId}`),
   ],
-);
-
-/**
- * Bestätigungslinks für E-Mail-Adressen (Double-Opt-In). Der Token liegt nur als Hash in der Datenbank.
- */
-export const emailVerifications = sqliteTable(
-  "email_verifications",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    email: text("email").notNull(),
-    tokenHash: text("token_hash").notNull().unique(),
-    expiresAt: text("expires_at").notNull(),
-    usedAt: text("used_at"),
-    createdAt: text("created_at").notNull().default(now),
-  },
-  (t) => [index("email_verifications_user_idx").on(t.userId)],
 );
 
 /**

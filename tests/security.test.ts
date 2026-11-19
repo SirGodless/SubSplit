@@ -4,10 +4,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createIpResolver, normalizeIp } from "@/lib/security/client-ip";
 import { csrfTokenValid, isSameOrigin } from "@/lib/security/csrf";
-import { hashPassword, verifyPassword } from "@/lib/security/password";
 import { RateLimiter } from "@/lib/security/rate-limit";
 import { createSecurityLogger, formatTimestamp } from "@/lib/security/security-log";
-import { createSession, refreshSession, sessionCookie, verifySession } from "@/lib/security/session";
+import { clearOidcCookie, oidcCookie, readOidcCookie, sessionCookie } from "@/lib/security/session";
 import { generateToken, hashToken, isWellFormedToken } from "@/lib/security/tokens";
 
 describe("Client-IP", () => {
@@ -95,42 +94,22 @@ describe("Tokens", () => {
   });
 });
 
-describe("Passwort", () => {
-  it("hash/verify, falsches Passwort, kaputter Hash", () => {
-    const h = hashPassword("korrektes-pferd-batterie", { N: 1024, r: 8, p: 1 });
-    expect(h).not.toContain("$");
-    expect(verifyPassword("korrektes-pferd-batterie", h)).toBe(true);
-    expect(verifyPassword("falsch", h)).toBe(false);
-    expect(verifyPassword("x", "müll")).toBe(false);
-    expect(verifyPassword("x", "scrypt:3:8:1:aa:bb")).toBe(false);
-  });
-});
-
 describe("Session / CSRF / Rate-Limit", () => {
   const secret = "s".repeat(40);
-  const U = { uid: 7, sv: 2 };
-  it("Session gültig, manipuliert, abgelaufen, anderes Secret", () => {
-    const { value, payload } = createSession(secret, U, 1_000_000);
-    expect(verifySession(value, secret, 1_000_000)?.csrf).toBe(payload.csrf);
-    expect(verifySession(value, secret, 1_000_000)).toMatchObject({ uid: 7, sv: 2 });
-    expect(verifySession(value + "x", secret, 1_000_000)).toBeNull();
-    expect(verifySession(value, "anderes-secret-anderes-secret-xx", 1_000_000)).toBeNull();
-    expect(verifySession(value, secret, 1_000_000 + 31 * 60 * 1000)).toBeNull(); // nach 30 min ohne Aktion abgelaufen
-    expect(verifySession(undefined, secret)).toBeNull();
-    const [body] = value.split(".");
-    expect(verifySession(`${body}.`, secret)).toBeNull();
-  });
-  it("Inaktivitäts-Timeout: Standard 30 Minuten, Verlängerung bei Aktivität, gleiches CSRF-Token", () => {
-    const t0 = 1_000_000;
-    const { value, payload } = createSession(secret, U, t0);
-    expect(verifySession(value, secret, t0 + 29 * 60 * 1000)).not.toBeNull();
-    // Aktivität nach 20 min verlängert um weitere 30 min -> nach 45 min noch gültig
-    const refreshed = refreshSession(payload, secret, t0 + 20 * 60 * 1000);
-    const again = verifySession(refreshed, secret, t0 + 45 * 60 * 1000);
-    expect(again?.csrf).toBe(payload.csrf);
-    expect(verifySession(refreshed, secret, t0 + 51 * 60 * 1000)).toBeNull(); // 31 min nach der letzten Aktivität
-    // einstellbar
-    expect(verifySession(createSession(secret, U, t0, 60).value, secret, t0 + 61 * 1000)).toBeNull();
+  const flow = { state: "s1", nonce: "n1", verifier: "v1", next: "/manage" };
+  it("Cookie der Weiterleitung zum Hub: gültig, manipuliert, abgelaufen, anderes Secret", () => {
+    const c = oidcCookie(flow, secret, true, 1_000_000);
+    const value = /subsplit_oidc=([^;]+)/.exec(c)![1]!;
+    expect(readOidcCookie(value, secret, 1_000_000)).toMatchObject(flow);
+    expect(readOidcCookie(value + "x", secret, 1_000_000)).toBeNull();
+    expect(readOidcCookie(value, "anderes-secret-anderes-secret-xx", 1_000_000)).toBeNull();
+    expect(readOidcCookie(value, secret, 1_000_000 + 11 * 60 * 1000)).toBeNull(); // nach 10 Minuten abgelaufen
+    expect(readOidcCookie(undefined, secret)).toBeNull();
+    expect(readOidcCookie(`${value.split(".")[0]}.`, secret)).toBeNull();
+    expect(c).toContain("SameSite=Lax"); // der Hub kommt mit einer Weiterleitung zurück
+    expect(c).toContain("HttpOnly");
+    expect(oidcCookie(flow, secret, false)).not.toContain("Secure");
+    expect(clearOidcCookie(true)).toContain("Max-Age=0");
   });
   it("Cookie: Max-Age entspricht dem Timeout, HttpOnly/SameSite, Secure nur bei https", () => {
     expect(sessionCookie("x", true)).toMatch(/Max-Age=1800.*Secure|Secure.*Max-Age=1800|Max-Age=1800/);
@@ -155,5 +134,17 @@ describe("Session / CSRF / Rate-Limit", () => {
     expect(rl.consume("andere-ip")).toBe(true);
     t = 1001;
     expect(rl.consume("ip")).toBe(true);
+  });
+});
+
+describe("Content-Security-Policy (Einbetten im Hub)", () => {
+  it("frame-ancestors erlaubt genau die Herkunft des Hubs, ohne gültige Adresse niemanden", async () => {
+    const { contentSecurityPolicy, hubOriginOf } = await import("@/lib/security/csp");
+    expect(hubOriginOf("https://anfall.net/")).toBe("https://anfall.net");
+    expect(hubOriginOf("https://anfall.net/pfad?x=1")).toBe("https://anfall.net");
+    for (const bad of [undefined, "", "anfall.net", "javascript:alert(1)", "ftp://anfall.net"]) expect(hubOriginOf(bad), String(bad)).toBeNull();
+    expect(contentSecurityPolicy("https://anfall.net")).toContain("frame-ancestors https://anfall.net;");
+    expect(contentSecurityPolicy(null)).toContain("frame-ancestors 'none';");
+    expect(contentSecurityPolicy("https://anfall.net")).toContain("default-src 'self'");
   });
 });

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Setzt die Abrechnung zurück: löscht Abos, Preise, Beteiligungen, Zahlungen, Daueraufträge und wartende
-// Erinnerungs-/Preis-Mails. Konten (Benutzer, Passwörter, Zahlungsdaten, E-Mail), Einladungen und Bestätigungen bleiben.
+// Erinnerungs-/Preis-Mails. Konten (Verknüpfung zum Hub, Zahlungsdaten, Einstellungen) bleiben.
 // Vorher wird automatisch ein Backup neben die Datenbank gelegt.
 //   App stoppen:   docker compose stop subsplit
 //   Zurücksetzen:  docker compose run --rm --no-deps subsplit node scripts/reset-billing.mjs --yes

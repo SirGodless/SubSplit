@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
-export type AuthFailReason = "invalid_token" | "admin_login";
+export type AuthFailReason = "invalid_token" | "admin_login" | "oidc_state" | "oidc_login";
 export type NoticeReason = "revoked_token";
 
 const TIME_ZONE = "Europe/Berlin";

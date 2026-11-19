@@ -4,18 +4,22 @@ Selbst gehostete Web-App, um gemeinsame Abos (Streaming, Software, …) unter Fr
 Konto. Wer ein Abo bezahlt, ist dessen **Empfänger**: Er legt das Abo an, trägt Mitzahler ein und bekommt das Geld.
 Dieselbe Person kann bei anderen wiederum **Mitzahler** sein.
 
-- **Konten für alle, per Einladung:** Neue Konten entstehen nur über **Einladungslinks**. Wer einen Link hat, wählt selbst
-  Benutzername, Anzeigename und Passwort. Jeder Link ist einmalig und 7 Tage gültig. Wer Links erstellen darf (alle oder
-  nur der Betreiber) und wie viele jedes Konto gleichzeitig offen haben darf (Standard 5), stellst du in der `.env` ein.
-  Es gibt keine offene Registrierung und keine Magic-Links.
+- **Konten kommen vom Hub:** SubSplit hat **keine eigene Benutzerverwaltung** mehr. Anmeldung, Einladungen, Passwörter, 2FA,
+  Sperren und Rechte verwaltet der Hub ([AuthenticationService](https://github.com/SirGodless/AuthenticationService)). SubSplit
+  ist dort ein Dienst (OpenID Connect) und kennt von jedem Menschen nur die **UUID** aus dem Hub. Daran hängen seine eigenen
+  Daten (Zahlungsdaten, Einstellungen, Abos). Benutzername und E-Mail-Adresse holt SubSplit beim Hub ab und speichert sie nicht.
+  Siehe Abschnitt „Anbindung an den Hub“.
+- **Zwei Arten, SubSplit zu öffnen:** direkt als eigene Webseite (z. B. `https://abos.anfall.net`) und **eingebettet im Hub**.
+  Im Rahmen blendet SubSplit Kopfzeile und Abmelden aus, die hat der Hub schon.
 - **Startseite:** Pro Empfänger steht der offene Betrag (laufender Monat **plus Rückstand** aus Vormonaten), dazu der
   Gesamtbetrag über alle Empfänger. Ein Klick führt zur Zahlungsseite mit PayPal-Link, Bankdaten, Referenz-ID und der
   Aufschlüsselung pro Abo (wer zahlt wie viel, damit nachprüfbar ist, dass nicht mehr verlangt wird als nötig).
 - **Empfänger-Ansicht:** Übersicht mit Gesamtkosten, bezahlt/offen und Verlauf, Abos mit Preisen und Beteiligten. Neue Mitzahler, die erst im Folgemonat starten würden, lassen sich per Knopf in den laufenden Monat einrechnen (offene Beträge der anderen sinken, bezahlte bleiben unverändert).
-- **Betreiber:** sieht alle Konten, setzt Passwörter zurück und sperrt Konten, sieht aber keine Beträge, Zahlungsdaten
-  oder Teilnehmer anderer, nur eine grobe Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem.
-- **E-Mails (optional, aus, solange `SMTP_HOST` fehlt):** Zahlungserinnerung, Info bei Preisänderung, Adress-Bestätigung
-  und Test-Mail. Keine IBAN, kein PayPal-Link, keine Antwortmöglichkeit; jede Erinnerung/Preis-Mail hat einen
+- **Betreiber** (Recht `subsplit.operator` im Hub): sieht die Konten, aber keine Beträge, Zahlungsdaten oder Teilnehmer
+  anderer, nur eine grobe Größenklasse der Monatssumme und eine Warnung bei Ungewöhnlichem. Konten, Passwörter und Sperren
+  verwaltet der Hub.
+- **E-Mails (optional, aus, solange `SMTP_HOST` fehlt):** Zahlungserinnerung, Info bei Preisänderung
+  und Test-Mail. Die Adresse kommt vom Hub und muss dort bestätigt sein. Keine IBAN, kein PayPal-Link, keine Antwortmöglichkeit; jede Erinnerung/Preis-Mail hat einen
   Abmelde-Link. Siehe Abschnitt „E-Mail“.
 - Alle Beträge sind Integer-Cent. Anteile werden **auf den vollen Cent abgerundet**, der Rest (höchstens Beteiligte − 1
   Cent pro Abo und Monat) bleibt beim Empfänger.
@@ -31,6 +35,9 @@ Voraussetzung: Docker mit Compose und ein laufender Reverse Proxy (Caddy) in ein
 git clone <dieses-repo> subsplit && cd subsplit
 cp .env.example .env
 ```
+
+0. **Im Hub anlegen** (siehe „Anbindung an den Hub“): Dienst `subsplit` mit der Rücksprung-Adresse
+   `<BASE_URL>/auth/callback`, das **Client-Geheimnis** notieren, das Recht `subsplit.operator` anlegen und dir geben.
 
 1. **Zwei Geheimnisse erzeugen** und in `.env` eintragen (verschieden, je mindestens 32 Zeichen):
 
@@ -66,14 +73,8 @@ cp .env.example .env
    Bei ungültiger Konfiguration bricht der Container mit einer klaren Meldung ab: `docker compose logs subsplit`.
    Der Port 3000 ist nur im Docker-Netzwerk erreichbar und nicht auf dem Host veröffentlicht.
 
-5. **Ersteinrichtung:** Beim allerersten Start legt die App das Betreiber-Konto `admin` an und schreibt einen
-   einmaligen Einrichtungslink ins Log (24 Stunden gültig):
-
-   ```bash
-   docker compose logs subsplit | grep Ersteinrichtung
-   ```
-
-   Link öffnen, Passwort festlegen, fertig. Solange das Passwort nicht gesetzt ist, steht bei jedem Start ein neuer Link im Log.
+5. **Anmelden:** `BASE_URL` öffnen. Die Seite leitet zum Hub. Wer dort angemeldet ist und das Recht `service.subsplit` hat, ist
+   ohne weitere Eingabe drin. Das lokale Konto entsteht beim ersten Login automatisch.
 
 ## Updates
 
@@ -92,22 +93,79 @@ docker compose up -d --build
 > unverschlüsselte Datenbank wird nicht übernommen und von der App abgelehnt, dort musste das Volume geleert werden.
 > Das gilt **nur** für diesen Umstieg und nie mehr danach.
 
+**Umstieg auf Konten aus dem Hub:** Die Migration `0004` entfernt Passwörter, Einladungen und Bestätigungen und behält die
+Konten samt Abos und Zahlungen. Alte Konten ohne Hub-Kennung können sich nicht mehr anmelden. Zwei Wege:
+
+- **Neu eintragen:** Beim ersten Login legt SubSplit ein neues, leeres Konto an. Zahlungsdaten und Abos trägst du neu ein.
+- **Verknüpfen (Daten bleiben):** Konto im Hub anlegen, dessen UUID aus dem Dashboard kopieren und dem alten Konto zuordnen.
+  **Vorher darf sich die Person noch nicht angemeldet haben**, sonst gibt es ein neues leeres Konto, das zuerst weg muss.
+
+  ```bash
+  docker compose stop subsplit
+  docker compose run --rm --no-deps subsplit node scripts/link-user.mjs --list
+  docker compose run --rm --no-deps subsplit node scripts/link-user.mjs <alter-benutzername> <UUID-im-Hub> --yes
+  docker compose up -d
+  ```
+
 ## Erste Schritte in der App
 
-1. **Einladen:** Reiter „Einladungen“ → „Einladungslink erstellen“. Der Link erscheint **nur einmal**; schicke ihn der
-   Person (z. B. per Messenger). Gespeichert wird nur ein Hash. Du siehst, welche Links offen, eingelöst (und von wem)
-   oder abgelaufen sind, und kannst offene Links widerrufen. Höchstens 5 Links gleichzeitig offen (einstellbar), je 7 Tage.
-2. **Die eingeladene Person** öffnet den Link und wählt Benutzername, Anzeigename (für Mitzahler sichtbar) und
-   Passwort (mindestens 12 Zeichen). **Betreiber:** Passwörter setzt du im Reiter „Betreiber“ über „Passwort
-   zurücksetzen“ zurück (neuer Link, 7 Tage gültig), Konten sperrst du dort ebenfalls.
-3. **Wer Abos anlegen will** (Betreiber eingeschlossen), trägt unter „Einstellungen“ Zahlungsdaten ein: mindestens
-   **IBAN oder PayPal.Me**, beides ist möglich, dazu Empfängername und den **Fälligkeitstag** (1–28). Ein Konto ohne
-   Zahlungsdaten ist ein reiner Mitzahler. Die Beispiel-IBAN aus der Dokumentation wird abgelehnt.
-4. **Verwalten → Abos:** Abo mit Preis und Startmonat anlegen, dann Konten als Mitzahler mit Gewicht (1 = gleicher Anteil)
-   auswählen. Die Liste zeigt alle Konten mit Anzeigename und Benutzername (Vertrauensbasis).
-5. **Verwalten → Übersicht:** Pro Monat Gesamtkosten, was die Mitzahler schulden, bestätigt/gemeldet/offen, dein eigener
+1. **Konten anlegen** geht nur im Hub (Einladungslink). Wer `service.subsplit` bekommt, kann SubSplit nutzen.
+2. **Wer Abos anlegen will**, trägt unter „Einstellungen“ Zahlungsdaten ein: mindestens **IBAN oder PayPal.Me**, beides ist
+   möglich, dazu Empfängername und den **Fälligkeitstag** (1–28). Ein Konto ohne Zahlungsdaten ist ein reiner Mitzahler. Die
+   Beispiel-IBAN aus der Dokumentation wird abgelehnt. Benutzername und E-Mail stehen dort nur zur Ansicht, sie ändern sich im Hub.
+3. **Verwalten → Abos:** Abo mit Preis und Startmonat anlegen, dann Konten als Mitzahler mit Gewicht (1 = gleicher Anteil)
+   auswählen. Die Liste zeigt alle Nutzer mit Zugang zu SubSplit (Vertrauensbasis) mit ihrem Benutzernamen aus dem Hub.
+4. **Verwalten → Übersicht:** Pro Monat Gesamtkosten, was die Mitzahler schulden, bestätigt/gemeldet/offen, dein eigener
    Anteil und ein Verlauf. Zahlungen bestätigst du mit „Bestätigen“.
-6. **Mitzahler** sehen auf ihrer Startseite, was sie schulden, zahlen und melden „Ich habe bezahlt“.
+5. **Mitzahler** sehen auf ihrer Startseite, was sie schulden, zahlen und melden „Ich habe bezahlt“.
+
+## Anbindung an den Hub
+
+SubSplit ist ein OIDC-Client (Authorization Code mit PKCE) und nutzt die Dienst-Schnittstelle des Hubs. Die Beschreibung für
+Dienste steht im Hub-Repo in `docs/INTEGRATION.md`.
+
+**Einmal im Hub einrichten** (Dashboard, Reiter Services und Rights, Recht `admin.services.manage`):
+
+1. Dienst anlegen: Schlüssel `subsplit` (das ist die Client-ID und das Präfix der Rechte), Anzeigename, Rücksprung-Adresse
+   `https://<deine-adresse>/auth/callback` (genau so, ohne Platzhalter). Das **Client-Geheimnis** erscheint nur einmal: in die `.env`
+   als `OIDC_CLIENT_SECRET`.
+2. Adresse zum Öffnen: `https://<deine-adresse>/`. **Logout-Adresse:** `https://<deine-adresse>/auth/backchannel-logout`.
+3. Öffnungsmodus `embedded`, wenn der Hub SubSplit im Rahmen zeigen soll (siehe unten), sonst `new_tab`.
+4. Recht `subsplit.operator` (boolesch) anlegen und den Betreibern geben. Wer SubSplit nutzen darf, bekommt `service.subsplit`.
+
+**Was SubSplit mit dem Hub macht:**
+
+- **Anmeldung:** `/auth/login` leitet zum Hub, `/auth/callback` tauscht den Code, prüft das ID-Token (Signatur über das JWKS,
+  Aussteller, Empfänger, Ablauf, nonce) und legt die Sitzung an. Sie steht in der Datenbank (nur der Hash des Cookie-Werts),
+  nicht mehr in einem signierten Cookie.
+- **Zugang wird alle 5 Minuten neu geprüft:** SubSplit löst das Refresh-Token ein. Ist das Konto im Hub gesperrt, hat es das
+  Recht verloren oder die Hub-Sitzung ist beendet, endet die Sitzung hier. Antwortet der Hub nicht, bleibt die Sitzung bestehen
+  und es gibt in einer Minute einen neuen Versuch.
+- **Gemeinsames Abmelden:** Meldet sich jemand im Hub ab (oder wird gesperrt), schickt der Hub ein Logout-Token an
+  `/auth/backchannel-logout`. SubSplit prüft es (Signatur, `typ`, Ereignis, kein `nonce`, `jti` nur einmal) und löscht die
+  Sitzung. „Abmelden“ in SubSplit selbst beendet nur die Sitzung hier, im Hub bleibt man angemeldet.
+- **Nutzerdaten:** Benutzername, E-Mail und Sperre kommen per `GET /api/service/users` aus dem Hub (höchstens eine Abfrage pro
+  Minute, nur im Arbeitsspeicher). Fällt der Hub aus, zeigt SubSplit die zuletzt bekannten Namen oder „(unbekannt)“.
+- **Betreiber** ist, wer im Hub das Recht `subsplit.operator` hat. Es wird bei jeder Prüfung neu gelesen.
+- **Mails:** Adresse und Bestätigung kommen vom Hub. SubSplit schickt Erinnerungen nur an bestätigte Adressen aktiver Konten. Die
+  Adresse liegt nur bis zum Versand in der Warteschlange.
+
+**Optional `OIDC_INTERNAL_URL`:** Aufrufe von Server zu Server (Token, Schlüssel, Nutzerabfrage) gehen direkt zum Hub-Backend
+statt über das Internet, z. B. `http://auth-backend:8080`, wenn beide Container im selben Docker-Netzwerk laufen. Die
+Authorize-Adresse im Browser bleibt die öffentliche.
+
+## Einbetten im Hub
+
+Im Öffnungsmodus `embedded` zeigt der Hub SubSplit unter `/app/subsplit` in einem Rahmen. Dafür gilt:
+
+- SubSplit sendet `Content-Security-Policy: frame-ancestors <Herkunft von OIDC_ISSUER>` (kein anderer darf es einbetten) und
+  **kein** `X-Frame-Options`. Die Richtlinie setzt `src/proxy.ts` zur Laufzeit, weil die Hub-Adresse erst beim Start feststeht.
+- **Eigene Ansicht für den Rahmen:** Der Browser sendet bei Anfragen eines Rahmens `Sec-Fetch-Dest: iframe`. Dann lässt
+  SubSplit Kopfzeile, Hell/Dunkel und Abmelden weg (`AppShell`), nur die Navigation bleibt.
+- SubSplit muss unter einer **Subdomain der Hub-Domain** laufen (gleiche „Site“), sonst sind die Cookies im Rahmen
+  Drittanbieter-Cookies und werden oft blockiert. Dazu steht die Sitzung als `SameSite=Strict`-Cookie, das im selben-Site-Rahmen
+  mitgeschickt wird.
+- **Nicht getestet:** das Verhalten im echten Browser. Die Aussagen stützen sich auf die MDN-Dokumentation.
 
 ## Regeln
 
@@ -137,16 +195,18 @@ docker compose up -d --build
 
 ## Konfiguration (nur Systemwerte in der `.env`)
 
-Benutzer, Empfängerdaten und Fälligkeitstag liegen **nicht** in der `.env`, sondern pro Konto in der App.
+Benutzer liegen im Hub, Empfängerdaten und Fälligkeitstag **nicht** in der `.env`, sondern pro Konto in der App.
 
 | Variable | Pflicht | Beschreibung |
 |---|---|---|
-| `BASE_URL` | ja | Öffentliche URL, Basis der Einrichtungslinks (z. B. `https://abos.example.org`). Cookies sind `Secure`, wenn sie mit `https` beginnt. |
-| `SESSION_SECRET` | ja | Mindestens 32 Zeichen, signiert die Sitzungen. |
+| `BASE_URL` | ja | Öffentliche URL von SubSplit (z. B. `https://abos.example.org`), Basis der Rücksprung-Adresse und der Mail-Links. Cookies sind `Secure`, wenn sie mit `https` beginnt. |
+| `OIDC_ISSUER` | ja | Fester Aussteller des Hubs, z. B. `https://anfall.net`. Daraus folgt auch, wer SubSplit einbetten darf. |
+| `OIDC_CLIENT_ID` | nein | Schlüssel des Dienstes im Hub (Standard `subsplit`), zugleich Präfix seiner Rechte. |
+| `OIDC_CLIENT_SECRET` | ja | Client-Geheimnis aus dem Dashboard des Hubs (wird dort nur einmal angezeigt). |
+| `OIDC_INTERNAL_URL` | nein | Direkte Adresse des Hub-Backends für Aufrufe von Server zu Server, z. B. `http://auth-backend:8080`. |
+| `SESSION_SECRET` | ja | Mindestens 32 Zeichen, signiert das kurze Cookie der Weiterleitung zum Hub und die Abmelde-Links in Mails. |
 | `DB_ENCRYPTION_KEY` | ja | Mindestens 32 Zeichen, verschlüsselt die gesamte Datenbankdatei. **Getrennt sichern; Verlust = Datenverlust.** Muss sich von `SESSION_SECRET` unterscheiden. |
 | `APP_NAME` | nein | Name im Verwendungszweck `<ID> <App-Name> <JJJJ-MM>` (Standard `SubSplit`). |
-| `INVITATIONS_CREATORS` | nein | Wer Einladungslinks erstellen darf: `all` (jedes Konto, Standard) oder `operator` (nur der Betreiber). Wirkt sofort, auch auf bereits erstellte Links anderer. |
-| `INVITATIONS_MAX_ACTIVE` | nein | Wie viele Einladungslinks jedes Konto gleichzeitig offen haben darf (0–100, Standard 5; für alle gleich, auch den Betreiber). `0` schaltet Einladungen ganz ab. |
 | `ADMIN_IDLE_TIMEOUT_MINUTES` | nein | Abmeldung nach so vielen Minuten ohne Aktion (1–1440, Standard 30). Jede Aktion setzt den Timer auf den vollen Wert zurück; es gibt keine absolute Obergrenze. |
 | `TRUSTED_PROXY_CIDR` | empfohlen | Adressbereich(e) des Proxy-Netzwerks, kommagetrennt. Nur von dort wird `X-Forwarded-For` übernommen. |
 | `SECURITY_LOG_FILE` | nein | Standard `/logs/security.log`. |
@@ -170,14 +230,13 @@ Zeitzone des Containers: `Europe/Berlin`.
 
 **Was verschickt wird (und nichts anderes):**
 
-1. **Adress-Bestätigung** (Double-Opt-in): Nach Eintragen/Ändern der Adresse in den Einstellungen kommt ein Link
-   (48 Stunden gültig, einmalig). Erst bestätigte Adressen bekommen weitere Mails. Ändert man die Adresse, entfällt die Bestätigung.
+1. **Adressen** kommen vom Hub und müssen dort bestätigt sein. Erst bestätigte Adressen bekommen Mails, SubSplit bestätigt selbst nichts mehr.
 2. **Zahlungserinnerung** an Mitzahler: erste Mail 3 Tage nach dem Fälligkeitstag, danach wöchentlich, höchstens 3 Mails
    pro offener Zahlung (alles per `.env` einstellbar). Eine Mail pro Empfänger mit Gesamtbetrag und Aufschlüsselung.
    Monate, die ein Dauerauftrag abdeckt, werden nicht erinnert. Versand nur zwischen 8 und 20 Uhr (Berlin).
 3. **Preisänderung:** Mitzahler eines Abos erfahren, was sich für sie ändert; wer per Dauerauftrag zahlt, bekommt den Hinweis,
    den Dauerauftrag anzupassen. Der Empfänger selbst bekommt keine Mail.
-4. **Test-Mail** (Einstellungen, nur mit bestätigter Adresse, max. 3 pro Stunde).
+4. **Test-Mail** (Einstellungen, nur mit bestätigter Adresse im Hub, max. 3 pro Stunde).
 
 In den Mails stehen **weder IBAN noch PayPal-Link** (nur Betrag und ein Link zur App); man kann nicht antworten. Erinnerungs-
 und Preis-Mails haben einen **Abmelde-Link** und die Header `List-Unsubscribe` / `List-Unsubscribe-Post`. Beides lässt sich
@@ -243,25 +302,26 @@ Das HTTPS-Zertifikat übernimmt Caddy.
 - **Client-IP:** Caddy verwirft eingehende `X-Forwarded-*`-Header standardmäßig (solange du `trusted_proxies` nicht
   setzt) und trägt die IP der Verbindung ein. Setze **kein** `trusted_proxies` in Caddy, außer vor Caddy hängt noch ein
   weiterer Proxy. (Aus Suchergebnissen und dem Caddy-Quellcode belegt, nicht aus der offiziellen Doku.)
-- **Links im Access-Log:** Der Token steht im URL-Pfad (`/invite/<token>` bzw. `/setup/<token>`) und landet in Caddys Access-Log,
-  falls du eines aktivierst. Du kannst ihn z. B. mit einem Log-Filter auf `request>uri` schwärzen
-  (`regexp "^/(setup|invite)/[A-Za-z0-9_-]+" "/$1/REDACTED"`). **Diese Syntax ist nicht gegen die Caddy-Doku geprüft.** Die
-  Links sind einmalig und befristet; die App setzt `Referrer-Policy: no-referrer`.
+- **Links im Access-Log:** Die Abmelde-Links aus Mails (`/unsubscribe/<token>`) stehen im URL-Pfad und landen in Caddys
+  Access-Log, falls du eines aktivierst. Du kannst sie z. B. mit einem Log-Filter auf `request>uri` schwärzen
+  (`regexp "^/unsubscribe/[A-Za-z0-9_.-]+" "/unsubscribe/REDACTED"`). **Diese Syntax ist nicht gegen die Caddy-Doku geprüft.**
+  Die App setzt `Referrer-Policy: no-referrer`.
+- **Der Hub muss SubSplit erreichen** (`/auth/backchannel-logout`, Server zu Server) und SubSplit den Hub. Laufen beide im selben
+  Docker-Netzwerk, geht das ohne Umweg über Caddy (`OIDC_INTERNAL_URL` bzw. die interne Adresse als Logout-Adresse im Hub).
 
 ## Sicherheits-Log und fail2ban
 
-Bei jedem fehlgeschlagenen Anmeldeversuch und bei jedem ungültigen Einrichtungslink schreibt die App genau eine Zeile in
+Bei jedem fehlgeschlagenen Anmeldeversuch (Rücksprung vom Hub mit falschem `state` oder abgelehntem Code) und bei jedem ungültigen Abmelde-Link schreibt die App genau eine Zeile in
 `SECURITY_LOG_FILE` (und zusätzlich nach stdout):
 
 ```
-2026-11-04T13:43:12+01:00 SUBSPLIT_AUTHFAIL ip=203.0.113.5 reason=admin_login
+2026-11-04T13:43:12+01:00 SUBSPLIT_AUTHFAIL ip=203.0.113.5 reason=oidc_state
 2026-11-04T13:43:13+01:00 SUBSPLIT_AUTHFAIL ip=203.0.113.5 reason=invalid_token
 ```
 
-- `admin_login` = falscher Benutzername/Passwort (auch bei gesperrten Konten), `invalid_token` = unbekannter oder
-  kaputter Einrichtungs- bzw. Einladungslink.
-- Ein **abgelaufener, bereits eingelöster oder widerrufener** Link zählt nicht als Fehlversuch (jemand mit einem alten
-  Link soll nicht gebannt werden): `SUBSPLIT_NOTICE … reason=revoked_token`.
+- `oidc_state` = Rücksprung vom Hub ohne passendes Cookie oder mit falschem `state`, `oidc_login` = der Hub hat den Code oder das
+  ID-Token abgelehnt, `invalid_token` = unbekannter oder kaputter Abmelde-Link. Das Passwort wird nicht mehr hier, sondern im
+  Hub geprüft (dessen Log und Sperren gelten dort). `admin_login` bleibt als Wert für ältere fail2ban-Filter erhalten, wird aber nicht mehr geschrieben.
 - Token, Passwörter und andere Geheimnisse stehen nie im Log. Ist keine gültige Client-IP bestimmbar, steht
   `ip=unknown` (kein Ban möglich, dafür nie eine falsche Adresse).
 - Die Datei liegt per Bind-Mount unter `./logs/security.log` auf dem Host.
@@ -333,7 +393,7 @@ Schutz der Verschlüsselung auf; ohne Schlüssel ist ein Backup wertlos.
 ## Abrechnung zurücksetzen (Konten bleiben)
 
 Löscht alle Abos, Preise, Beteiligungen, Zahlungen, Daueraufträge und wartende Erinnerungs-/Preis-Mails. Konten
-(Passwörter, Zahlungsdaten, E-Mail), Einladungen und Bestätigungen bleiben. Vorher legt das Skript automatisch ein
+(Verknüpfung zum Hub, Zahlungsdaten, Einstellungen) bleiben. Vorher legt das Skript automatisch ein
 Backup unter `/data/backups/vor-reset-<Zeit>.db` an.
 
 ```bash
@@ -344,21 +404,24 @@ docker compose up -d
 
 ## Datenschutz
 
-- **Mitzahler sehen sich gegenseitig** mit Anzeigenamen, Gewichten, Anteilen und Beträgen **innerhalb der gemeinsamen
-  Abos**. Wähle Anzeigenamen entsprechend (Vorname oder Spitzname). Das steht auch auf der Zahlungsseite.
-- **Empfänger sehen** in der Kontenliste beim Eintragen von Mitzahlern die Anzeigenamen und Benutzernamen aller aktiven
-  Konten (das System beruht auf Vertrauen unter Freunden). Mitzahler sehen die Zahlungsdaten (IBAN, PayPal.Me,
+- **Mitzahler sehen sich gegenseitig** mit Benutzername (aus dem Hub), Gewichten, Anteilen und Beträgen **innerhalb der gemeinsamen
+  Abos**. Wähle den Benutzernamen im Hub entsprechend. Das steht auch auf der Zahlungsseite.
+- **Empfänger sehen** in der Kontenliste beim Eintragen von Mitzahlern die Benutzernamen aller Nutzer mit Zugang zu SubSplit
+  (das System beruht auf Vertrauen unter Freunden). Mitzahler sehen die Zahlungsdaten (IBAN, PayPal.Me,
   Empfängername) des Empfängers, bei dem sie zahlen.
 - **Betreiber:** Die Oberfläche zeigt dem Betreiber nur Konto-Stammdaten, Status, eine Größenklasse der Monatssumme und
   eine Warnung. **Technisch** hat der Betreiber mit Serverzugriff und `DB_ENCRYPTION_KEY` aber Zugriff auf alle Daten.
-- **Verschlüsselung:** Die gesamte Datenbankdatei ist verschlüsselt, also auch Namen, IBAN, PayPal.Me-Name, E-Mail,
-  Benutzernamen und alle Zahlungen. Sie schützt vor dem **Diebstahl der Datenbankdatei oder eines Backups**, nicht vor
-  jemandem, der den laufenden Server samt Schlüssel in der `.env` übernimmt. **Passwörter werden nicht verschlüsselt,
-  sondern mit scrypt gehasht** (nicht zurückrechenbar).
+- **Was SubSplit speichert:** die UUID aus dem Hub und eigene Daten dazu (Zahlungsdaten, Einstellungen, Abos, Zahlungen,
+  Sitzungen mit Refresh-Token). **Keine Passwörter, keine Benutzernamen, keine E-Mail-Adressen.** Die kommen vom Hub und liegen nur
+  kurz im Arbeitsspeicher. Ausnahme: Die Mail-Warteschlange hält die Adresse bis zum Versand. Konten aus der Zeit vor dem Hub behalten
+  ihren alten Benutzernamen und Namen (`legacy_*`), bis sie verknüpft sind.
+- **Verschlüsselung:** Die gesamte Datenbankdatei ist verschlüsselt, also auch IBAN, PayPal.Me-Name, Sitzungen und alle Zahlungen.
+  Sie schützt vor dem **Diebstahl der Datenbankdatei oder eines Backups**, nicht vor jemandem, der den laufenden Server samt
+  Schlüssel in der `.env` übernimmt.
 - **E-Mail:** Adressen liegen in der verschlüsselten Datenbank. Die Warteschlange (`mail_outbox`) löscht Adresse und Text
   nach erfolgreichem Versand und wird nach 60 Tagen bereinigt. In Logs stehen keine Adressen oder Mail-Inhalte. Mails gehen
   nur über deinen eigenen Server (oder den SMTP-Server, den du einträgst), nie über einen Dienst, den die App selbst wählt.
-- Gespeichert werden außerdem E-Mail-Adressen (optional) und im **Sicherheits-Log IP-Adressen** (nur für
+- Gespeichert werden außerdem im **Sicherheits-Log IP-Adressen** (nur für
   Sicherheitszwecke, nicht ewig aufbewahren, siehe oben). Sonst keine personenbezogenen Daten in Logs. Keine Tracker,
   keine externen Schriften oder Skripte.
 - Sobald du die App für andere betreibst, bist du Verantwortlicher für deren Daten. Das ist keine Rechtsberatung.
@@ -409,13 +472,13 @@ Bitte vor dem Livebetrieb prüfen:
 
 ```bash
 npm install
-npm test            # Vitest: Berechnung, Zahlungslinks, Sicherheit, Konten, Mandantentrennung, Verschlüsselung
+npm test            # Vitest: Berechnung, Zahlungslinks, Sicherheit, Anmeldung gegen einen Mock-Hub, Mandantentrennung, Verschlüsselung
 npm run typecheck
-npm run dev         # benötigt die Umgebungsvariablen aus .env.example
+npm run dev         # benötigt die Umgebungsvariablen aus .env.example und einen erreichbaren Hub
 ```
 
 Wichtige Stellen: Berechnung `src/lib/billing`, Zahlungslinks `src/lib/pay`, Sicherheit `src/lib/security`,
-Konten und Login `src/lib/services/users.ts`, Verwaltung pro Empfänger `src/lib/services/manage.ts`, Zahlungen und
+Anbindung an den Hub `src/lib/hub` (OIDC-Client, Dienst-Schnittstelle, Namen im Speicher), Sitzungen `src/lib/services/sessions.ts` und `src/lib/server/session-auth.ts`, Anmelde-Adressen `src/app/auth`, Empfängerdaten `src/lib/services/users.ts`, Verwaltung pro Empfänger `src/lib/services/manage.ts`, Zahlungen und
 Rückstand `src/lib/services/payments.ts`, Sichten mit serverseitiger Sichtbarkeit `src/lib/services/views.ts`.
 
 ## Offen

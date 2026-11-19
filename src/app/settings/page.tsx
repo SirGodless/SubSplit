@@ -15,8 +15,8 @@ export default async function SettingsPage() {
       <main className="shell">
         <SettingsForm
           initial={{
-            username: u.username, displayName: u.displayName, email: u.email ?? "", recipientName: u.recipientName ?? "", paypalMe: u.paypalMe ?? "", iban: u.iban ?? "", dueDay: u.dueDay,
-            emailVerified: !!u.emailVerifiedAt, remindersEnabled: u.remindersEnabled, priceMailsEnabled: u.priceMailsEnabled, mailEnabled: ctx().config.mail !== null,
+            username: u.username, email: u.email ?? "", hubAccountUrl: `${ctx().config.hub.origin}/account`, recipientName: u.recipientName ?? "", paypalMe: u.paypalMe ?? "", iban: u.iban ?? "", dueDay: u.dueDay,
+            emailVerified: u.emailVerified, remindersEnabled: u.remindersEnabled, priceMailsEnabled: u.priceMailsEnabled, mailEnabled: ctx().config.mail !== null,
           }}
         />
       </main>

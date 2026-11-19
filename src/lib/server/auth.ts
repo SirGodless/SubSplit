@@ -1,12 +1,11 @@
 import { cookies } from "next/headers";
-import { SESSION_COOKIE, verifySession, type SessionPayload } from "@/lib/security/session";
-import { getSessionUser, type UserRow } from "@/lib/services/users";
+import { SESSION_COOKIE } from "@/lib/security/session";
+import type { SessionRow } from "@/lib/services/sessions";
 import { ctx } from "./context";
+import { authenticate, type SessionUser } from "./session-auth";
 
-/** Angemeldetes Konto für Server-Komponenten (null, wenn nicht angemeldet, gesperrt oder Sitzung abgelaufen). */
-export async function getPageUser(): Promise<{ user: UserRow; session: SessionPayload } | null> {
+/** Angemeldetes Konto für Server-Komponenten (null, wenn nicht angemeldet, Zugang beim Hub weg oder Sitzung abgelaufen). */
+export async function getPageUser(): Promise<{ user: SessionUser; session: SessionRow } | null> {
   const c = ctx();
-  const session = verifySession((await cookies()).get(SESSION_COOKIE)?.value, c.config.sessionSecret);
-  const user = session ? getSessionUser(c.db, session.uid, session.sv) : null;
-  return session && user ? { user, session } : null;
+  return authenticate({ db: c.db, oidc: c.oidc, hub: c.hub, idleSeconds: c.config.idleSeconds }, (await cookies()).get(SESSION_COOKIE)?.value);
 }

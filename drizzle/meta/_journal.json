@@ -29,6 +29,13 @@
       "when": 1793884206467,
       "tag": "0003_wide_ravenous",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795082528865,
+      "tag": "0004_hub_accounts",
+      "breakpoints": true
     }
   ]
 }

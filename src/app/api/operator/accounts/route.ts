@@ -4,7 +4,7 @@ import { getOperatorAccounts } from "@/lib/services/views";
 
 export const dynamic = "force-dynamic";
 
-/** Konten-Übersicht für den Betreiber. Neue Konten entstehen über Einladungslinks (/api/invitations). */
+/** Konten-Übersicht für den Betreiber (Größenklasse und Warnung). Konten selbst verwaltet der Hub. */
 export const GET = userRoute(() => {
   const { db, config } = ctx();
   return { accounts: getOperatorAccounts(db, { thresholdCents: config.unusualMonthlyTotalCents, factor: config.unusualFactor }) };
