@@ -15,7 +15,7 @@ export function formatPercent(p: number): string {
 
 export function formatDueDate(month: string, dueDay: number): string {
   const [y, m] = month.split("-").map(Number) as [number, number];
-  return `${String(dueDay).padStart(2, "0")}.${String(m).padStart(2, "0")}.${y}`;
+  return `${y}-${String(m).padStart(2, "0")}-${String(dueDay).padStart(2, "0")}`;
 }
 
 export const STATUS_LABEL = { open: "Offen", marked_paid: "Als bezahlt gemeldet", confirmed: "Bestätigt" } as const;
@@ -30,7 +30,7 @@ export function parseEuro(input: string): number | null {
 /** "2026-11-01" -> "01.11.2026". */
 export function formatDate(iso: string): string {
   const [y, m, d] = iso.split("-");
-  return `${d}.${m}.${y}`;
+  return `${y}-${m}-${d}`;
 }
 
 export const VOLUME_LABEL = { none: "–", lt100: "unter 100 €", "100to300": "100–300 €", "300to1000": "300–1.000 €", gt1000: "über 1.000 €" } as const;

@@ -11,6 +11,6 @@ describe("format", () => {
   });
   it("Monat und Fälligkeit", () => {
     expect(formatMonth("2026-11")).toBe("November 2026");
-    expect(formatDueDate("2026-11", 1)).toBe("01.11.2026");
+    expect(formatDueDate("2026-11", 1)).toBe("2026-11-01");
   });
 });
