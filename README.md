@@ -106,6 +106,16 @@ Konten samt Abos und Zahlungen. Alte Konten ohne Hub-Kennung können sich nicht 
   docker compose run --rm --no-deps subsplit node scripts/link-user.mjs <alter-benutzername> <UUID-im-Hub> --yes
   docker compose up -d
   ```
+- **Alte Konten entfernen:** Konten ohne Hub-Kennung kannst du löschen, wenn du sie nicht brauchst (mit ihren Beteiligungen, Zahlungen
+  und Daueraufträgen, automatisches Backup vorher). Besitzt ein altes Konto noch Abos, bricht das Skript ab: dann erst
+  `reset-billing.mjs --yes` (löscht alle Abos, Konten bleiben) oder das Konto verknüpfen.
+
+  ```bash
+  docker compose stop subsplit
+  docker compose run --rm --no-deps subsplit node scripts/remove-unlinked-users.mjs          # nur ansehen
+  docker compose run --rm --no-deps subsplit node scripts/remove-unlinked-users.mjs --yes    # löschen
+  docker compose up -d
+  ```
 
 ## Erste Schritte in der App
 

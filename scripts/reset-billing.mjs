@@ -43,7 +43,7 @@ try {
     db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('payments','standing_orders','memberships','subscription_prices','subscriptions','reminder_log')").run();
   })();
   console.log("Gelöscht:", counts);
-  console.log("Konten, Einladungen und E-Mail-Bestätigungen sind unverändert.");
+  console.log("Konten (Verknüpfung zum Hub, Zahlungsdaten, Einstellungen) sind unverändert.");
 } catch (err) {
   console.error("Zurücksetzen fehlgeschlagen (nichts geändert):", err instanceof Error ? err.message : err);
   process.exitCode = 1;
